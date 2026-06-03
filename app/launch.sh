@@ -55,10 +55,27 @@ else
   # The NVIDIA VAAPI driver can't initialise without the GPU; stop libva from
   # even trying to load it (avoids noisy init failures).
   unset LIBVA_DRIVER_NAME NVD_BACKEND
-  RENDER_FLAGS=(
-    --disable-gpu
-    --enable-features=UseOzonePlatform
-  )
+  if [[ "${SOFTWARE_WEBGL:-}" == "1" ]]; then
+    # Software rendering that STILL provides WebGL. Plain --disable-gpu turns the
+    # GPU process off entirely, which also disables WebGL -- so a GPU-less host
+    # can't run WebGL content at all. SwiftShader (Chromium's CPU rasteriser,
+    # reached through ANGLE) gives a real, if slow, WebGL implementation instead,
+    # letting the WebGL path be exercised on hosts with no GPU (e.g. CI runners).
+    # --enable-unsafe-swiftshader opts back into SwiftShader-backed WebGL, which
+    # recent Chromium gates behind a flag now that hardware is the default.
+    echo "launch.sh: SOFTWARE_WEBGL=1 -> SwiftShader WebGL (ANGLE, CPU)" >&2
+    RENDER_FLAGS=(
+      --use-gl=angle
+      --use-angle=swiftshader
+      --enable-unsafe-swiftshader
+      --enable-features=UseOzonePlatform
+    )
+  else
+    RENDER_FLAGS=(
+      --disable-gpu
+      --enable-features=UseOzonePlatform
+    )
+  fi
 fi
 
 exec "$ELECTRON_BIN" /app \
