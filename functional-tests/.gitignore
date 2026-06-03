@@ -1,0 +1,13 @@
+# Gradle
+.gradle/
+build/
+
+# Allure
+allure-results/
+allure-report/
+.allure/
+
+# IDE
+.idea/
+*.iml
+.vscode/
