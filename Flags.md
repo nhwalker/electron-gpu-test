@@ -335,9 +335,15 @@ switches/features in §4–§5 use these instead.
 ### Dumping flags from this binary
 
 > **`chrome://flags` is NOT available in Electron** ([electron#22209]) — Electron
-> ships without the `about_flags` UI, so there is no in-app feature browser.
-> `chrome://gpu` is also unreliable and returns `ERR_FAILED` on Linux in recent
-> Electron releases ([electron#39535]). Don't rely on either to enumerate flags.
+> ships without the `about_flags` UI, so there is no in-app feature browser for
+> enumerating every `base::Feature`.
+>
+> **`chrome://gpu` does work**, though, and is the recommended GPU diagnostic —
+> it shows the GPU feature status, driver/VA-API info, and the active workarounds.
+> This repo's [`plan.md`](./plan.md) verification flow uses it (along with
+> `chrome://media-internals` and `chrome://webrtc-internals`) to confirm the
+> hardware-decode path. (An older `ERR_FAILED` regression on Linux in Electron
+> 25/26 — [electron#39535] — does not affect this 41.x build.)
 
 What *does* work from the binary:
 
