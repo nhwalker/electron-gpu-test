@@ -37,26 +37,27 @@ functional-tests/
     ├── groovy/.../ElectronAppFunctionalTest.groovy        # drives the REAL Electron app
     └── resources/
         ├── web/index.html                                 # page served during the Chromium E2E test
-        └── electron/                                      # test image that runs the real app/ headlessly
-            ├── Dockerfile
-            ├── electron-entrypoint.sh                     # Xvfb + ChromeDriver
-            ├── electron-run.sh                            # ChromeDriver's "browser binary" wrapper
-            ├── render-check.html                          # deterministic page the app loads
-            └── extra-cas/                                 # optional proxy CA certs (usually empty)
+        └── electron/                                      # thin test harness layered on the PRODUCTION image
+            ├── harness.Dockerfile                         # FROM electron-gpu-test + Xvfb + ChromeDriver
+            ├── test-harness-entrypoint.sh                 # Xvfb -> launch.sh (remote debug) -> ChromeDriver
+            └── render-check.html                          # deterministic page the app loads
 ```
 
 ## Tests
 
 - **`StackSmokeTest`** — Docker-free; verifies the Java 25 toolchain and that every library resolves.
 - **`BrowserContainerFunctionalTest`** — boots nginx + a Selenium **standalone Chromium** container and drives one against the other.
-- **`ElectronAppFunctionalTest`** — Testcontainers builds an image from the repo's `app/` (dropping the
-  production NVIDIA/GPU stack) and runs the **real Electron app** headlessly under Xvfb with **software
-  rendering**. A version-matched ChromeDriver launches the Electron binary, and Selenium asserts on what
-  the app rendered — including a `navigator.userAgent` check proving it's Electron, not standalone Chromium.
+- **`ElectronAppFunctionalTest`** — Testcontainers builds the **production image** (the repo's
+  `Containerfile`, NVIDIA stack and all), then a thin harness layer on top that adds only Xvfb + a
+  version-matched ChromeDriver. The harness starts the **real app via the production `/app/launch.sh`**,
+  which detects the absence of a GPU and **falls back to software rendering** — so the NVIDIA stack is
+  proven harmless on a GPU-less host. Selenium then attaches to the running app and asserts on what it
+  rendered, including a `navigator.userAgent` check proving it's Electron, not standalone Chromium.
 
-  The image builds the app with `npm install` (downloads Electron + a matching ChromeDriver), so this test
-  needs network access at build time. Behind a TLS-intercepting proxy, drop the proxy's CA into
-  `src/test/resources/electron/extra-cas/` (the test forwards a detected host CA automatically).
+  Building the production image runs `dnf`/`npm` (downloads Electron + a matching ChromeDriver), so this
+  test needs network access at build time and takes a few minutes on a cold cache. Behind a TLS-intercepting
+  proxy, drop the proxy's CA into the repo root's `extra-cas/` (the test forwards a detected host CA
+  automatically; see the `Containerfile`'s optional CA-trust step).
 
 ## Run
 

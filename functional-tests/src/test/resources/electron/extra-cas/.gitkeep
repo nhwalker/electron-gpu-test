@@ -1,9 +1,0 @@
-# Keeps the extra-cas/ directory present so the Dockerfile's
-#   COPY extra-cas/ /opt/extra-cas/
-# step always has something to copy.
-#
-# Drop additional CA certificates (*.crt, one cert per file) here to have them
-# trusted inside the test image -- useful when building behind a TLS-intercepting
-# (corporate / sandbox) egress proxy. The functional test populates this
-# automatically at build time when it detects such a proxy; with direct internet
-# access this stays empty and the trust step is a no-op.
