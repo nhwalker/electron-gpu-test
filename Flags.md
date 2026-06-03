@@ -19,9 +19,9 @@ Electron build used by this project.
 > every release. Those cannot be exhaustively hand-listed and kept correct, so
 > [§4](#4-chromium-switches) and [§5](#5-feature-flags---enable-features--
 > --disable-features) document the mechanism, the switches/features that matter
-> for this repo, and — in [§7](#7-how-to-enumerate-the-complete-set-on-your-build)
-> — how to dump the *complete*, version-exact list straight out of this Electron
-> binary.
+> for this repo, and — in [§7](#7-reference-links--how-to-enumerate-the-complete-set)
+> — link a complete switches reference and the version-exact Chromium 146 source
+> tree.
 
 ---
 
@@ -234,8 +234,8 @@ electron . \
 * A feature may carry inline parameters: `Feature:key1/val1/key2/val2`.
 * `--disable-features` wins over `--enable-features` for the same feature.
 * The full feature catalogue is generated from Chromium 146 source
-  (`*_features.cc`) and numbers in the thousands. The **only** authoritative,
-  version-exact list is the one inside this binary — see §7 (`chrome://flags`).
+  (`*_features.cc`) and numbers in the thousands. The authoritative,
+  version-exact list is the Chromium 146.0.7680.166 source tree — see §7.
 
 ### Features used / relevant in this repo
 
@@ -299,54 +299,74 @@ sandbox).
 
 ---
 
-## 7. How to enumerate the complete set on your build
+## 7. Reference links & how to enumerate the complete set
 
-Hand-maintained lists drift between Chromium releases. To get the **exact**
-switches and features compiled into *this* Electron 41.1.1 / Chromium 146
-binary:
+Hand-maintained lists drift between Chromium releases, so for the Chromium
+switches/features in §4–§5 use these instead.
 
-1. **All feature flags (with current state):** launch the app and open the
-   internal page
+### Reference web pages
 
-   ```
-   chrome://flags
-   ```
+* **Chromium command-line switches (full list):**
+  <https://peter.sh/experiments/chromium-command-line-switches/>
+  The de-facto complete switch reference, auto-generated from Chromium source
+  with per-switch descriptions and availability conditions.
+  ⚠️ It tracks **tip-of-tree** (last automated update 2026-04-12), *not* a
+  pinned release — it's close to but **not guaranteed identical** to this build's
+  146.0.7680.166. Use it for descriptions; confirm version-exact presence in the
+  source tree below.
 
-   Every `base::Feature` exposed in this build is listed with its default and
-   override. `chrome://gpu` shows GPU feature status and the exact switches the
-   GPU process was launched with; `chrome://version` shows the full command
-   line.
+* **Version-exact source tree (Chromium 146.0.7680.166 — this build):**
+  <https://chromium.googlesource.com/chromium/src/+/refs/tags/146.0.7680.166/>
+  The only authoritative, build-exact reference. Switch *names* live in the
+  `*_switches.cc` files, e.g.:
+  * [`content/public/common/content_switches.cc`](https://chromium.googlesource.com/chromium/src/+/refs/tags/146.0.7680.166/content/public/common/content_switches.cc)
+  * [`ui/gl/gl_switches.cc`](https://chromium.googlesource.com/chromium/src/+/refs/tags/146.0.7680.166/ui/gl/gl_switches.cc)
+  * [`gpu/config/gpu_switches.cc`](https://chromium.googlesource.com/chromium/src/+/refs/tags/146.0.7680.166/gpu/config/gpu_switches.cc)
+  * [`ui/ozone/public/ozone_switches.cc`](https://chromium.googlesource.com/chromium/src/+/refs/tags/146.0.7680.166/ui/ozone/public/ozone_switches.cc)
 
-2. **All V8 flags:**
+  Feature *names* live in the matching `*_features.cc` files, e.g.
+  [`media/base/media_switches.cc`](https://chromium.googlesource.com/chromium/src/+/refs/tags/146.0.7680.166/media/base/media_switches.cc)
+  (which defines the VA-API / video-decode features used in §5).
+
+* **Electron switches (this exact tag):**
+  <https://github.com/electron/electron/blob/v41.1.1/docs/api/command-line-switches.md>
+  — the source for §1–§2, verbatim.
+
+### Dumping flags from this binary
+
+> **`chrome://flags` is NOT available in Electron** ([electron#22209]) — Electron
+> ships without the `about_flags` UI, so there is no in-app feature browser.
+> `chrome://gpu` is also unreliable and returns `ERR_FAILED` on Linux in recent
+> Electron releases ([electron#39535]). Don't rely on either to enumerate flags.
+
+What *does* work from the binary:
+
+1. **All V8 flags** (prints to stderr, then exits):
 
    ```sh
    electron . --js-flags="--help"
    ```
 
-3. **All Node flags:**
+2. **All Node flags:**
 
    ```sh
    ELECTRON_RUN_AS_NODE=1 electron --help
    ```
 
-4. **Chromium switch constants** — grep the matching source tree for this
-   Chromium milestone (146): the switch *names* live in
-   `*_switches.cc` (e.g. `content/public/common/content_switches.cc`,
-   `ui/gl/gl_switches.cc`, `gpu/config/gpu_switches.cc`,
-   `ui/ozone/public/ozone_switches.cc`) and the feature *names* in
-   `*_features.cc`. Pin to the Chromium 146.0.7680.x tag to match this build.
+3. **See what actually took effect at runtime:** launch with
+   `--enable-logging --v=1` and read the process launch line in stderr, or in
+   the main process inspect `app.commandLine` / `process.argv`.
 
-5. **See what actually took effect at runtime:** start with
-   `--enable-logging --v=1` and read the launch line, or inspect
-   `chrome://version` → "Command Line".
+[electron#22209]: https://github.com/electron/electron/issues/22209
+[electron#39535]: https://github.com/electron/electron/issues/39535
 
 > Rule of thumb: §1–§3 are stable for the life of Electron 41.x; §4–§5 should be
-> treated as *examples* and verified against `chrome://flags` / `chrome://gpu`
-> for anything you depend on.
+> treated as *examples* and verified against the source tree above for anything
+> you depend on.
 
 ---
 
 *Generated for Electron 41.1.1 (Chromium 146.0.7680.166, Node v24.14.0,
 V8 14.6). Electron/Node switch lists are taken verbatim from the upstream
 `v41.1.1` documentation; Chromium switch/feature entries are a curated subset —
-use §7 for the authoritative, build-exact list.*
+use §7 for the authoritative, build-exact source.*
