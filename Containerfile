@@ -19,29 +19,51 @@
 FROM registry.access.redhat.com/ubi9/ubi:latest
 
 # --- Repos: EPEL9 + RPM Fusion (enable free AND nonfree; the bridge has been
-# listed under both). CRB for any -devel pulls. VERIFY these release-RPM URLs. ---
+# listed under both). CRB (CodeReady Builder) backs some of the X libs. On UBI9
+# the repo id is `ubi-9-codeready-builder-rpms`, NOT `crb` (that's the
+# CentOS Stream / full-RHEL name) -- try all known ids and ignore misses.
+# VERIFY these release-RPM URLs on your host. ---
 RUN dnf -y install \
         https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
         https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-9.noarch.rpm \
         https://mirrors.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-9.noarch.rpm && \
-    dnf config-manager --set-enabled crb || true
+    dnf config-manager --set-enabled \
+        crb ubi-9-codeready-builder-rpms \
+        "codeready-builder-for-rhel-9-$(uname -m)-rpms" || true
 
-# --- Electron / Chromium 146 runtime shared libraries ---
-# These are the libs a prebuilt Electron binary dynamically loads on RHEL/UBI.
+# --- Electron / Chromium 146 runtime shared libraries (REQUIRED) ---
+# These are the libs a prebuilt Electron binary hard-loads on RHEL/UBI; a miss
+# here should fail the build. (Verified against the CI run: every name below
+# resolved in UBI9 BaseOS/AppStream + EPEL9.)
 RUN dnf -y install \
         nss nspr \
         atk at-spi2-atk at-spi2-core \
         cups-libs \
         libdrm mesa-libgbm mesa-libGL mesa-libEGL mesa-dri-drivers \
-        libxkbcommon libxkbcommon-x11 \
+        libxkbcommon \
         libX11 libXcomposite libXdamage libXext libXfixes libXrandr \
         libXScrnSaver libXtst libxcb libxshmfence libXi libXcursor libXrender \
         libwayland-client libwayland-egl libwayland-cursor \
         alsa-lib pango cairo cairo-gobject gtk3 expat \
-        libnotify libuuid \
+        libuuid \
         libva libva-utils \
-        dbus-libs \
-        liberation-fonts && \
+        dbus-libs && \
+    dnf clean all
+
+# --- Optional/uncertain runtime libs (BEST EFFORT) ---
+# These aren't guaranteed to exist in the UBI9+EPEL9 repo set (they live in
+# CRB / full-RHEL AppStream, which UBI only partially mirrors):
+#   - libxkbcommon-x11 : X11 keyboard mapping (only the X11 Ozone path needs it)
+#   - libnotify        : the HTML5 Notifications API (not needed for GPU decode)
+#   - liberation-*-fonts : default Western fonts for text rendering
+# Install each independently so an unavailable name doesn't break the build;
+# missing ones are a verify-on-host follow-up, not a hard failure.
+RUN for pkg in \
+        libxkbcommon-x11 \
+        libnotify \
+        liberation-sans-fonts liberation-serif-fonts liberation-mono-fonts; do \
+        dnf -y install "$pkg" || echo "WARN: optional package '$pkg' unavailable, skipping"; \
+    done && \
     dnf clean all
 
 # --- VAAPI->NVDEC bridge from RPM Fusion (the bit previously built from source) ---
