@@ -1,0 +1,5 @@
+# Don't ship a host-built node_modules into the image; the Containerfile runs
+# `npm install` inside UBI9 so the Electron binary matches the image's libc/arch.
+app/node_modules/
+node_modules/
+.git/
