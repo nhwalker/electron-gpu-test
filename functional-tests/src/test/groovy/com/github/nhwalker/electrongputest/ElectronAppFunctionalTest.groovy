@@ -4,6 +4,9 @@ import io.qameta.allure.Description
 import io.qameta.allure.Epic
 import io.qameta.allure.Feature
 import io.qameta.allure.Step
+import com.github.dockerjava.api.command.CreateContainerCmd
+import com.github.dockerjava.api.model.Mount
+import com.github.dockerjava.api.model.MountType
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.openqa.selenium.chrome.ChromeOptions
@@ -18,6 +21,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.Duration
+import java.util.function.Consumer
 import java.util.function.Predicate
 
 import static org.junit.jupiter.api.Assertions.assertEquals
@@ -27,13 +31,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue
  * Drives the REAL electron-gpu-test app, built from the production
  * {@code Containerfile} -- not a separate test build.
  *
- * Testcontainers first builds the production image (NVIDIA stack and all), then
- * builds a thin harness layer ON TOP of it that adds only Xvfb + a version-matched
- * ChromeDriver (see {@code electron/harness.Dockerfile}). The harness boots the app
- * through the production {@code /app/launch.sh}, which detects the absence of a GPU
- * and falls back to software rendering -- proving the NVIDIA stack is harmless on a
- * GPU-less host. Selenium then attaches to the running app and asserts on what it
- * rendered.
+ * The virtual display lives in its OWN sidecar container (Xvfb), which shares its
+ * {@code /tmp/.X11-unix} socket with the app container through a Docker volume.
+ * The app thus connects to an X server running outside its container -- the same
+ * model the production image uses against the host's X server -- so the app image
+ * itself carries no test-only display tooling.
+ *
+ * Testcontainers builds the production image (NVIDIA stack and all), then a thin
+ * harness layer on top that adds only a version-matched ChromeDriver. The harness
+ * boots the app through the production {@code /app/launch.sh}, which detects the
+ * absence of a GPU and falls back to software rendering -- proving the NVIDIA
+ * stack is harmless on a GPU-less host. Selenium then attaches to the running app
+ * and asserts on what it rendered.
  *
  * {@code disabledWithoutDocker} so it skips (not fails) where Docker is absent.
  */
@@ -49,8 +58,28 @@ class ElectronAppFunctionalTest {
     // to (launch.sh is started with --remote-debugging-port=9222).
     private static final String DEBUGGER_ADDRESS = '127.0.0.1:9222'
 
+    // The X display the sidecar serves and the app connects to.
+    private static final String DISPLAY = ':99'
+
+    // A named Docker volume shared between the sidecar and the app container, so
+    // the sidecar's X socket is visible to the app (a shared-volume mount is
+    // order-independent, unlike withVolumesFrom which needs the source running).
+    private static final String X11_SOCKET_DIR = '/tmp/.X11-unix'
+    private static final String XSOCK_VOLUME = 'electron-gpu-test-xsock'
+
+    // Sidecar that provides ONLY the virtual X display, publishing its socket into
+    // the shared volume that the app container also mounts.
+    @Container
+    static final GenericContainer<?> XVFB = new GenericContainer<>(buildXvfbImage())
+            .withCreateContainerCmdModifier(shareXSocketVolume())
+            .waitingFor(Wait.forLogMessage('.*X-READY.*', 1))
+
     @Container
     static final GenericContainer<?> ELECTRON = new GenericContainer<>(buildHarnessImage())
+            .dependsOn(XVFB)
+            // Mount the same X socket volume and connect to the sidecar's display.
+            .withCreateContainerCmdModifier(shareXSocketVolume())
+            .withEnv('DISPLAY', DISPLAY)
             .withExposedPorts(CHROMEDRIVER_PORT)
             .withStartupTimeout(Duration.ofSeconds(240))
             .waitingFor(
@@ -60,8 +89,8 @@ class ElectronAppFunctionalTest {
                             .forResponsePredicate({ String body -> body.contains('"ready":true') } as Predicate))
 
     @Test
-    @DisplayName('The production app renders a page, falling back to software rendering with no GPU')
-    @Description('Builds the production image, boots the real app via launch.sh (which selects software rendering on a GPU-less host), and drives it with Selenium.')
+    @DisplayName('The production app renders a page via a sidecar X server, with no GPU')
+    @Description('Builds the production image, serves an X display from a sidecar container, boots the real app via launch.sh (software rendering on a GPU-less host), and drives it with Selenium.')
     void productionAppRendersPage() {
         // launch.sh must have taken the no-GPU software path -- i.e. the NVIDIA
         // stack stayed inert rather than failing the launch.
@@ -75,13 +104,16 @@ class ElectronAppFunctionalTest {
             assertEquals('electron render check', driver.title)
             assertEquals('Electron rendered this page', headlineText(driver))
 
-            // Prove we drove the real Electron app, not a standalone browser:
-            // Electron stamps the app name + "Electron/<version>" into the UA.
+            // Prove we drove the real Electron app on the X11 backend (the shared
+            // display), not a standalone/headless browser. Electron stamps the app
+            // name + "Electron/<version>" into the UA.
             String ua = userAgent(driver)
             assertTrue(ua.contains('Electron/41'),
                     "Expected an Electron user agent but was: ${ua}".toString())
             assertTrue(ua.contains('electron-gpu-test/'),
                     "Expected the app's name in the user agent but was: ${ua}".toString())
+            assertTrue(ua.contains('X11'),
+                    "Expected the X11 (shared display) backend but UA was: ${ua}".toString())
 
             // Prove the page actually rendered (compositing works in software mode).
             assertTrue(headlineIsVisible(driver), 'Headline rendered with zero size')
@@ -122,8 +154,31 @@ class ElectronAppFunctionalTest {
     }
 
     /**
+     * Mounts the shared X socket volume at {@code /tmp/.X11-unix}. Docker creates
+     * the named volume on first use; the sidecar's entrypoint clears any stale
+     * socket before recreating it, so reusing a fixed name across runs is safe.
+     */
+    private static Consumer<CreateContainerCmd> shareXSocketVolume() {
+        return { CreateContainerCmd cmd ->
+            List<Mount> mounts = new ArrayList<>(cmd.getHostConfig().getMounts() ?: Collections.<Mount> emptyList())
+            mounts.add(new Mount()
+                    .withType(MountType.VOLUME)
+                    .withSource(XSOCK_VOLUME)
+                    .withTarget(X11_SOCKET_DIR))
+            cmd.getHostConfig().withMounts(mounts)
+        } as Consumer<CreateContainerCmd>
+    }
+
+    /** Builds the standalone Xvfb sidecar image. */
+    private static ImageFromDockerfile buildXvfbImage() {
+        return new ImageFromDockerfile('electron-gpu-test:xvfb', false)
+                .withFileFromClasspath('Dockerfile', 'electron/xvfb.Dockerfile')
+                .withFileFromClasspath('xvfb-entrypoint.sh', 'electron/xvfb-entrypoint.sh')
+    }
+
+    /**
      * Builds the production image from the repo's {@code Containerfile}, then a
-     * thin harness layer (Xvfb + ChromeDriver) on top of it. Any host egress-proxy
+     * thin harness layer (ChromeDriver only) on top of it. Any host egress-proxy
      * CA is forwarded so the in-image dnf/npm downloads work behind a TLS-
      * intercepting proxy; with direct egress this is a harmless no-op.
      */
