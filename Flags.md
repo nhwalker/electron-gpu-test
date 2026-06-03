@@ -304,6 +304,12 @@ sandbox).
 Hand-maintained lists drift between Chromium releases, so for the Chromium
 switches/features in §4–§5 use these instead.
 
+> **`chrome://flags` dump for this exact build:** see
+> [`ChromeFlags.md`](./ChromeFlags.md) — every `chrome://flags` entry in Chromium
+> 146.0.7680.166 (Linux-available subset), machine-extracted from
+> `about_flags.cc` + `flag_descriptions.h` at the release tag, with each flag's
+> backing feature/switch.
+
 ### Reference web pages
 
 * **Chromium command-line switches (full list):**
