@@ -32,10 +32,31 @@ functional-tests/
 ├── settings.gradle           # project name + Foojay toolchain resolver
 ├── gradle.properties         # build caching / parallel / configuration cache
 └── src/test/
-    ├── groovy/.../StackSmokeTest.groovy              # Docker-free wiring checks
-    ├── groovy/.../BrowserContainerFunctionalTest.groovy  # nginx + Selenium E2E
-    └── resources/web/index.html                       # page served during the E2E test
+    ├── groovy/.../StackSmokeTest.groovy                   # Docker-free wiring checks
+    ├── groovy/.../BrowserContainerFunctionalTest.groovy   # nginx + Selenium E2E (standalone Chromium)
+    ├── groovy/.../ElectronAppFunctionalTest.groovy        # drives the REAL Electron app
+    └── resources/
+        ├── web/index.html                                 # page served during the Chromium E2E test
+        └── electron/                                      # test image that runs the real app/ headlessly
+            ├── Dockerfile
+            ├── electron-entrypoint.sh                     # Xvfb + ChromeDriver
+            ├── electron-run.sh                            # ChromeDriver's "browser binary" wrapper
+            ├── render-check.html                          # deterministic page the app loads
+            └── extra-cas/                                 # optional proxy CA certs (usually empty)
 ```
+
+## Tests
+
+- **`StackSmokeTest`** — Docker-free; verifies the Java 25 toolchain and that every library resolves.
+- **`BrowserContainerFunctionalTest`** — boots nginx + a Selenium **standalone Chromium** container and drives one against the other.
+- **`ElectronAppFunctionalTest`** — Testcontainers builds an image from the repo's `app/` (dropping the
+  production NVIDIA/GPU stack) and runs the **real Electron app** headlessly under Xvfb with **software
+  rendering**. A version-matched ChromeDriver launches the Electron binary, and Selenium asserts on what
+  the app rendered — including a `navigator.userAgent` check proving it's Electron, not standalone Chromium.
+
+  The image builds the app with `npm install` (downloads Electron + a matching ChromeDriver), so this test
+  needs network access at build time. Behind a TLS-intercepting proxy, drop the proxy's CA into
+  `src/test/resources/electron/extra-cas/` (the test forwards a detected host CA automatically).
 
 ## Run
 
