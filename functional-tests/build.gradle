@@ -1,6 +1,6 @@
 plugins {
-    // Groovy is the test language; the Gradle 'groovy' plugin compiles src/test/groovy.
-    id 'groovy'
+    // Java is the test language; the Gradle 'java' plugin compiles src/test/java.
+    id 'java'
     // Allure reporting: wires the AspectJ weaver and the report-generation tasks.
     id 'io.qameta.allure' version '4.0.2'
 }
@@ -23,7 +23,6 @@ repositories {
 
 // Single source of truth for dependency versions.
 ext {
-    groovyVersion         = '5.0.6'
     junitVersion          = '5.14.4'   // JUnit 5 (latest 5.x line)
     testcontainersVersion = '2.0.5'    // Testcontainers (latest; 2.x renamed modules to testcontainers-*)
     seleniumVersion       = '4.44.0'
@@ -31,9 +30,6 @@ ext {
 }
 
 dependencies {
-    // Groovy itself (the language the tests are written in).
-    testImplementation "org.apache.groovy:groovy:${groovyVersion}"
-
     // JUnit 5, version-aligned via its BOM.
     testImplementation platform("org.junit:junit-bom:${junitVersion}")
     testImplementation 'org.junit.jupiter:junit-jupiter'
