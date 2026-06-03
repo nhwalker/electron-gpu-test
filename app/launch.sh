@@ -30,8 +30,19 @@ exec "$ELECTRON_BIN" /app \
   --use-angle=gl \
   --ignore-gpu-blocklist \
   --disable-gpu-driver-bug-workarounds \
-  --disable-gpu-sandbox \
+  --no-sandbox \
   "$@"
+
+# NOTE on --no-sandbox (was --disable-gpu-sandbox):
+# As the non-root 'app' user in a default container, Chromium's setuid/namespace
+# sandbox can't initialise -- it dies with "Failed to move to new namespace ...
+# Operation not permitted" before any page loads. --disable-gpu-sandbox only
+# covers the GPU process, not that one, so it isn't enough on its own.
+# --no-sandbox disables the full sandbox and lets the app start with a plain
+# `docker/podman run` (no --security-opt/--cap-add needed). Acceptable here
+# because this is a controlled GPU-decode test container. To keep the sandbox
+# instead, make chrome-sandbox setuid-root (chmod 4755, owned root) AND run with
+# --security-opt seccomp=unconfined (or --cap-add SYS_ADMIN).
 
 # --- Run-command differences between display servers (NOT in this script) -----
 # X11 (test here first):
