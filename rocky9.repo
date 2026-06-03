@@ -1,0 +1,32 @@
+# Rocky Linux 9 BaseOS + AppStream as a LAST-RESORT fallback.
+#
+# UBI9's public repos are a subset of RHEL and omit a few libs Chromium wants on
+# X11 (libxkbcommon-x11), notifications (libnotify), and default fonts
+# (liberation-*). Rocky 9 is RHEL-ABI-compatible, so these install cleanly.
+#
+# priority=200 (dnf default is 99; LOWER number = HIGHER priority) makes these
+# repos last-resort: for any package also present in UBI/AppStream, EPEL, or RPM
+# Fusion, dnf prefers those and only reaches into Rocky for packages nothing else
+# provides. This prevents Rocky from shadowing UBI base packages (glibc, mesa,
+# etc.) and keeps the image essentially UBI with a thin Rocky top-up.
+#
+# module_hotfixes=1 lets non-modular Rocky packages satisfy deps even when a
+# matching dnf module stream is enabled.
+
+[rocky9-baseos]
+name=Rocky Linux 9 - BaseOS (last-resort fallback)
+baseurl=https://dl.rockylinux.org/pub/rocky/9/BaseOS/$basearch/os/
+enabled=1
+gpgcheck=1
+gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
+priority=200
+module_hotfixes=1
+
+[rocky9-appstream]
+name=Rocky Linux 9 - AppStream (last-resort fallback)
+baseurl=https://dl.rockylinux.org/pub/rocky/9/AppStream/$basearch/os/
+enabled=1
+gpgcheck=1
+gpgkey=https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-9
+priority=200
+module_hotfixes=1

@@ -26,16 +26,30 @@ FROM registry.access.redhat.com/ubi9/ubi:latest
 RUN dnf -y install \
         https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
         https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-9.noarch.rpm \
-        https://mirrors.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-9.noarch.rpm && \
-    dnf config-manager --set-enabled \
-        crb ubi-9-codeready-builder-rpms \
-        "codeready-builder-for-rhel-9-$(uname -m)-rpms" || true
+        https://mirrors.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-9.noarch.rpm && { \
+        dnf config-manager --set-enabled \
+            crb ubi-9-codeready-builder-rpms \
+            "codeready-builder-for-rhel-9-$(uname -m)-rpms" || true; \
+        # We never install Cisco's openh264; disabling its repo (added by
+        # epel-release) avoids a known-flaky build dependency on codecs.fedoraproject.org.
+        dnf config-manager --set-disabled epel-cisco-openh264 || true; \
+    }
+
+# --- Rocky Linux 9 as a LAST-RESORT fallback repo (priority=200; see rocky9.repo)
+# Supplies the handful of libs UBI omits (libxkbcommon-x11, libnotify, fonts).
+# The low priority means dnf only pulls from Rocky what nothing else provides, so
+# UBI base packages are never shadowed. ---
+COPY rocky9.repo /etc/yum.repos.d/rocky9.repo
 
 # --- Electron / Chromium 146 runtime shared libraries (REQUIRED) ---
 # These are the libs a prebuilt Electron binary hard-loads on RHEL/UBI; a miss
 # here should fail the build. (Verified against the CI run: every name below
 # resolved in UBI9 BaseOS/AppStream + EPEL9.)
-RUN dnf -y install \
+# install_weak_deps=False is essential now that the Rocky fallback repo exists:
+# without it, dnf would satisfy these libs' optional Recommends (pipewire,
+# flatpak, xdg-desktop-portal, ModemManager, ...) from Rocky and balloon the
+# image. We want only hard deps -- Rocky stays a true last resort.
+RUN dnf -y install --setopt=install_weak_deps=False \
         nss nspr \
         atk at-spi2-atk at-spi2-core \
         cups-libs \
@@ -50,20 +64,17 @@ RUN dnf -y install \
         dbus-libs && \
     dnf clean all
 
-# --- Optional/uncertain runtime libs (BEST EFFORT) ---
-# These aren't guaranteed to exist in the UBI9+EPEL9 repo set (they live in
-# CRB / full-RHEL AppStream, which UBI only partially mirrors):
-#   - libxkbcommon-x11 : X11 keyboard mapping (only the X11 Ozone path needs it)
-#   - libnotify        : the HTML5 Notifications API (not needed for GPU decode)
+# --- Runtime libs absent from UBI9, sourced from the Rocky fallback repo ---
+# UBI9's public repos don't carry these; the Rocky 9 last-resort repo above does:
+#   - libxkbcommon-x11 : X11 keyboard mapping (the X11 Ozone path needs it)
+#   - libnotify        : the HTML5 Notifications API
 #   - liberation-*-fonts : default Western fonts for text rendering
-# Install each independently so an unavailable name doesn't break the build;
-# missing ones are a verify-on-host follow-up, not a hard failure.
-RUN for pkg in \
+# These now install normally (a miss is a real failure worth surfacing).
+# install_weak_deps=False keeps Rocky to just these packages + their hard deps.
+RUN dnf -y install --setopt=install_weak_deps=False \
         libxkbcommon-x11 \
         libnotify \
-        liberation-sans-fonts liberation-serif-fonts liberation-mono-fonts; do \
-        dnf -y install "$pkg" || echo "WARN: optional package '$pkg' unavailable, skipping"; \
-    done && \
+        liberation-sans-fonts liberation-serif-fonts liberation-mono-fonts && \
     dnf clean all
 
 # --- VAAPI->NVDEC bridge from RPM Fusion (the bit previously built from source) ---
@@ -77,7 +88,7 @@ RUN dnf -y install --setopt=install_weak_deps=False \
 # --- Node.js (build-time only): used to npm-install the Electron app below.
 # The app runs on Electron's own bundled Node at runtime, not this one. ---
 RUN dnf -y module enable nodejs:20 && \
-    dnf -y install nodejs npm && \
+    dnf -y install --setopt=install_weak_deps=False nodejs npm && \
     dnf clean all
 
 # --- Environment that selects the NVIDIA VAAPI backend ---
