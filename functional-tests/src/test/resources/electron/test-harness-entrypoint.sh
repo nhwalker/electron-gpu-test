@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# Test harness entrypoint: boot a virtual display, start the REAL production app
-# via its launch.sh (with remote debugging enabled), then expose ChromeDriver so
-# Selenium can attach to the running app. ChromeDriver is only revealed once the
-# app's DevTools endpoint is live, so "ChromeDriver ready" implies "app is up".
+# Test harness entrypoint. The virtual display comes from a sidecar Xvfb
+# container that shares /tmp/.X11-unix with us, so here we just wait for that
+# socket, start the REAL production app via launch.sh (with remote debugging),
+# then expose ChromeDriver for Selenium to attach. ChromeDriver is only revealed
+# once the app's DevTools endpoint is live, so "ChromeDriver ready" implies
+# "app is up".
 set -euo pipefail
 
-export DISPLAY=:99
-Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+export DISPLAY="${DISPLAY:-:99}"
+DISPLAY_NUM="${DISPLAY#:}"
+SOCKET="/tmp/.X11-unix/X${DISPLAY_NUM}"
 
-# Wait for the X11 socket before launching the GUI app.
-for _ in $(seq 1 100); do
-    [ -S /tmp/.X11-unix/X99 ] && break
+# Wait for the X socket published by the sidecar Xvfb container (shared volume).
+for _ in $(seq 1 300); do
+    [ -S "${SOCKET}" ] && break
     sleep 0.1
 done
+[ -S "${SOCKET}" ] || { echo "X socket ${SOCKET} never appeared (is the Xvfb sidecar up?)" >&2; exit 1; }
 
 # Launch the production app exactly as it ships: launch.sh picks hardware vs
 # software rendering itself (software here, since CI has no GPU). We only add
