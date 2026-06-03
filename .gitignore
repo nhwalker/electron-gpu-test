@@ -6,3 +6,6 @@ npm-debug.log*
 # throwaway Containerfile that trusts it). Never commit these.
 egress-ca-bundle.crt
 Containerfile.localtest
+
+# Local-only proxy CA certs injected for sandboxed builds (never commit)
+extra-cas/*.crt

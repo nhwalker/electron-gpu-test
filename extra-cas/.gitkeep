@@ -1,0 +1,7 @@
+# Keeps extra-cas/ present so the Containerfile's
+#   COPY extra-cas/ /etc/pki/ca-trust/source/anchors/
+# step always has something to copy.
+#
+# Drop a TLS-intercepting proxy's CA here (one PEM per *.crt file) to have it
+# trusted while building behind such a proxy. With direct internet access this
+# stays empty and the trust step is a no-op. Real certs are gitignored.

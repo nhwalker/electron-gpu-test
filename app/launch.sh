@@ -23,13 +23,47 @@ elif [[ "${OZONE:-}" == "wayland" ]]; then
   OZONE_FLAG="--ozone-platform=wayland"
 fi
 
+# --- Hardware vs software rendering -------------------------------------------
+# The NVIDIA flags below target hardware decode/render. With no GPU present (a CI
+# runner, or any plain `docker/podman run` without --device nvidia.com/gpu=all),
+# forcing the VAAPI/NVIDIA GL path makes Chromium fail to bring up its GPU stack.
+# Detect that and fall back to software rendering so the app still starts and
+# renders -- the NVIDIA stack in the image is then simply inert.
+#
+# Override the probe with FORCE_SOFTWARE=1 (always software) or FORCE_HARDWARE=1
+# (assume a GPU and skip the probe).
+gpu_present() {
+  [[ "${FORCE_HARDWARE:-}" == "1" ]] && return 0
+  [[ "${FORCE_SOFTWARE:-}" == "1" ]] && return 1
+  # The NVIDIA userspace is injected at runtime; its device nodes are the signal.
+  compgen -G "/dev/nvidia*" >/dev/null 2>&1 && return 0
+  # Any other DRM render node (non-NVIDIA GPUs).
+  compgen -G "/dev/dri/renderD*" >/dev/null 2>&1 && return 0
+  return 1
+}
+
+if gpu_present; then
+  RENDER_FLAGS=(
+    --enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiOnNvidiaGPUs,VaapiIgnoreDriverChecks
+    --use-gl=angle
+    --use-angle=gl
+    --ignore-gpu-blocklist
+    --disable-gpu-driver-bug-workarounds
+  )
+else
+  echo "launch.sh: no GPU detected -> software rendering (NVIDIA hardware decode disabled)" >&2
+  # The NVIDIA VAAPI driver can't initialise without the GPU; stop libva from
+  # even trying to load it (avoids noisy init failures).
+  unset LIBVA_DRIVER_NAME NVD_BACKEND
+  RENDER_FLAGS=(
+    --disable-gpu
+    --enable-features=UseOzonePlatform
+  )
+fi
+
 exec "$ELECTRON_BIN" /app \
   "$OZONE_FLAG" \
-  --enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiOnNvidiaGPUs,VaapiIgnoreDriverChecks \
-  --use-gl=angle \
-  --use-angle=gl \
-  --ignore-gpu-blocklist \
-  --disable-gpu-driver-bug-workarounds \
+  "${RENDER_FLAGS[@]}" \
   --no-sandbox \
   "$@"
 

@@ -1,0 +1,83 @@
+plugins {
+    // Groovy is the test language; the Gradle 'groovy' plugin compiles src/test/groovy.
+    id 'groovy'
+    // Allure reporting: wires the AspectJ weaver and the report-generation tasks.
+    id 'io.qameta.allure' version '4.0.2'
+}
+
+group = 'com.github.nhwalker.electrongputest'
+version = '1.0.0-SNAPSHOT'
+description = 'Functional / end-to-end tests for the electron-gpu-test container'
+
+// Pin the toolchain to Java 25. If the JDK isn't installed, the foojay resolver
+// configured in settings.gradle downloads it.
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+// Single source of truth for dependency versions.
+ext {
+    groovyVersion         = '5.0.6'
+    junitVersion          = '5.14.4'   // JUnit 5 (latest 5.x line)
+    testcontainersVersion = '2.0.5'    // Testcontainers (latest; 2.x renamed modules to testcontainers-*)
+    seleniumVersion       = '4.44.0'
+    allureVersion         = '2.35.2'
+}
+
+dependencies {
+    // Groovy itself (the language the tests are written in).
+    testImplementation "org.apache.groovy:groovy:${groovyVersion}"
+
+    // JUnit 5, version-aligned via its BOM.
+    testImplementation platform("org.junit:junit-bom:${junitVersion}")
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Testcontainers, version-aligned via its BOM. In Testcontainers 2.x the
+    // module artifacts are prefixed with 'testcontainers-'.
+    testImplementation platform("org.testcontainers:testcontainers-bom:${testcontainersVersion}")
+    testImplementation 'org.testcontainers:testcontainers'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-selenium'
+    testImplementation 'org.testcontainers:testcontainers-nginx'
+
+    // Selenium, version-aligned via its BOM.
+    testImplementation platform("org.seleniumhq.selenium:selenium-bom:${seleniumVersion}")
+    testImplementation 'org.seleniumhq.selenium:selenium-java'
+
+    // Allure reporting adapter for JUnit 5, version-aligned via its BOM.
+    testImplementation platform("io.qameta.allure:allure-bom:${allureVersion}")
+    testImplementation 'io.qameta.allure:allure-junit5'
+}
+
+// Configure the Allure CLI/report version to match the adapter on the classpath.
+allure {
+    version = allureVersion
+    adapter {
+        // The adapter dependency is declared explicitly above, so leave
+        // autoconfiguration off and just enable the AspectJ weaver that powers
+        // @Step / @Attachment instrumentation.
+        autoconfigure = false
+        aspectjWeaver = true
+    }
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+
+    // Surface results in the console; full stack traces make CI failures legible.
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat = 'full'
+        showStandardStreams = false
+    }
+
+    // Where the raw Allure results are written (consumed by `./gradlew allureReport`).
+    systemProperty 'allure.results.directory', layout.buildDirectory.dir('allure-results').get().asFile.absolutePath
+}

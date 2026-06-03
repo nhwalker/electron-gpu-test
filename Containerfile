@@ -18,6 +18,16 @@
 
 FROM registry.access.redhat.com/ubi9/ubi:latest
 
+# --- Optional: trust extra CA certificates before any TLS download ------------
+# Build environments behind a TLS-intercepting proxy (corporate / CI egress
+# gateways) present a private CA that dnf/curl won't trust by default, which
+# breaks every https repo fetch below. Drop such CAs (one PEM per *.crt) into the
+# build context's `extra-cas/` dir and they're trusted here. The dir is always
+# present but usually contains only a placeholder, so with direct egress this is
+# a no-op.
+COPY extra-cas/ /etc/pki/ca-trust/source/anchors/
+RUN update-ca-trust extract || true
+
 # --- Repos: EPEL9 + RPM Fusion (enable free AND nonfree; the bridge has been
 # listed under both). CRB (CodeReady Builder) backs some of the X libs. On UBI9
 # the repo id is `ubi-9-codeready-builder-rpms`, NOT `crb` (that's the

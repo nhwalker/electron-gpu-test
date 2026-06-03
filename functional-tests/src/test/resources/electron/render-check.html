@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>electron render check</title>
+</head>
+<body>
+    <h1 id="headline">Electron rendered this page</h1>
+    <p id="engine">Powered by Chromium via Electron</p>
+    <script>
+        // Expose the Chrome/Chromium version so the test can prove it's really
+        // running inside Electron's Chromium, not a standalone browser.
+        document.addEventListener('DOMContentLoaded', () => {
+            const el = document.createElement('pre');
+            el.id = 'ua';
+            el.textContent = navigator.userAgent;
+            document.body.appendChild(el);
+        });
+    </script>
+</body>
+</html>

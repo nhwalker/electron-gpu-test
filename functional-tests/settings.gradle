@@ -1,0 +1,7 @@
+plugins {
+    // Lets Gradle auto-provision the JDK 25 toolchain (via the Foojay Disco API)
+    // when a matching JDK isn't already installed on the build machine.
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'functional-tests'
