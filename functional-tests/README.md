@@ -2,12 +2,12 @@
 
 End-to-end / functional tests for **electron-gpu-test**.
 
-A Gradle (Groovy build) project written in **Groovy on Java 25**, using:
+A Gradle (Groovy build) project with tests written in **Java 25**, using:
 
 | Concern            | Library / tool                         | Version  |
 | ------------------ | -------------------------------------- | -------- |
 | Build              | Gradle (wrapper)                       | 9.5.1    |
-| Language           | Apache Groovy                          | 5.0.6    |
+| Language           | Java                                   | 25       |
 | Test framework     | JUnit 5 (Jupiter)                      | 5.14.4   |
 | Container fixtures | Testcontainers                         | 2.0.5    |
 | Browser automation | Selenium                               | 4.44.0   |
@@ -32,9 +32,9 @@ functional-tests/
 ├── settings.gradle           # project name + Foojay toolchain resolver
 ├── gradle.properties         # build caching / parallel / configuration cache
 └── src/test/
-    ├── groovy/.../StackSmokeTest.groovy                   # Docker-free wiring checks
-    ├── groovy/.../BrowserContainerFunctionalTest.groovy   # nginx + Selenium E2E (standalone Chromium)
-    ├── groovy/.../ElectronAppFunctionalTest.groovy        # drives the REAL Electron app
+    ├── java/.../StackSmokeTest.java                       # Docker-free wiring checks
+    ├── java/.../BrowserContainerFunctionalTest.java       # nginx + Selenium E2E (standalone Chromium)
+    ├── java/.../ElectronAppFunctionalTest.java            # drives the REAL Electron app
     └── resources/
         ├── web/index.html                                 # page served during the Chromium E2E test
         └── electron/                                      # thin test harness layered on the PRODUCTION image
