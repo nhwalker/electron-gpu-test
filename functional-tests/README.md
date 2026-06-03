@@ -35,14 +35,17 @@ functional-tests/
     ├── java/.../StackSmokeTest.java                       # Docker-free wiring checks
     ├── java/.../BrowserContainerFunctionalTest.java       # nginx + Selenium E2E (standalone Chromium)
     ├── java/.../ElectronAppFunctionalTest.java            # drives the REAL Electron app
+    ├── java/.../WebGlWorldWindFunctionalTest.java         # drives the app rendering a NASA WorldWind WebGL globe
     └── resources/
         ├── web/index.html                                 # page served during the Chromium E2E test
         └── electron/                                      # thin test harness layered on the PRODUCTION image
             ├── harness.Dockerfile                         # FROM electron-gpu-test + ChromeDriver (no Xvfb)
+            ├── webgl-harness.Dockerfile                   # as above + vendored offline NASA WorldWind
             ├── test-harness-entrypoint.sh                 # wait for shared X socket -> launch.sh -> ChromeDriver
             ├── xvfb.Dockerfile                            # standalone Xvfb sidecar image
             ├── xvfb-entrypoint.sh                         # serves the X display into the shared socket volume
-            └── render-check.html                          # deterministic page the app loads
+            ├── render-check.html                          # deterministic page the app loads
+            └── webgl-worldwind.html                       # NASA WorldWind globe page (offline) for the WebGL test
 ```
 
 ## Tests
@@ -64,6 +67,16 @@ functional-tests/
   test needs network access at build time and takes a few minutes on a cold cache. Behind a TLS-intercepting
   proxy, drop the proxy's CA into the repo root's `extra-cas/` (the test forwards a detected host CA
   automatically; see the `Containerfile`'s optional CA-trust step).
+
+- **`WebGlWorldWindFunctionalTest`** — the **WebGL** check. It reuses the exact same selenium + electron
+  path as `ElectronAppFunctionalTest` (Xvfb sidecar → production `/app/launch.sh` → ChromeDriver attach),
+  but loads a **NASA WebWorldWind** globe. Two things make WebGL
+  work and stay deterministic: the app is launched with `SOFTWARE_WEBGL=1`, so `launch.sh` renders via
+  **SwiftShader** (ANGLE) instead of `--disable-gpu` — giving a real, GPU-less WebGL implementation; and the
+  harness **vendors WorldWind plus its bundled imagery** into the image, so the globe textures load from
+  `file://` with **no network** at run time. The test asserts the page obtained a live WebGL context and
+  painted a frame, then **captures a screenshot of the rendered globe into the Allure report** and decodes it
+  to confirm the frame is a non-blank, multi-colour render (a failed WebGL frame would be uniform black).
 
 ## Run
 
