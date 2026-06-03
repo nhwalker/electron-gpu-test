@@ -1,0 +1,8 @@
+node_modules/
+app/node_modules/
+npm-debug.log*
+
+# Local-only container build-test artifacts (sandbox egress-proxy CA + the
+# throwaway Containerfile that trusts it). Never commit these.
+egress-ca-bundle.crt
+Containerfile.localtest
