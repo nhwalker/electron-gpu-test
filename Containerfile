@@ -114,6 +114,18 @@ ENV NVD_BACKEND=direct
 ENV NVIDIA_DRIVER_CAPABILITIES=all
 ENV NVIDIA_VISIBLE_DEVICES=all
 
+# --- Disable Chromium's setuid/namespace sandbox -----------------------------
+# As the non-root 'app' user in a default container, Chromium's sandbox can't
+# initialise -- it dies with "Failed to move to new namespace ... Operation not
+# permitted" before any page loads. Electron honours ELECTRON_DISABLE_SANDBOX=1
+# as the documented equivalent of the --no-sandbox switch, so setting it on the
+# container disables the sandbox for every launch without touching the command
+# line. Acceptable here because this is a controlled GPU-decode test container.
+# To keep the sandbox instead, unset this, make chrome-sandbox setuid-root
+# (chmod 4755, owned root) AND run with --security-opt seccomp=unconfined
+# (or --cap-add SYS_ADMIN).
+ENV ELECTRON_DISABLE_SANDBOX=1
+
 # --- The app ---
 # A minimal Electron app that opens the web pages named on its command line.
 # All Node/npm files live under app/ in the repo and are installed into /app.

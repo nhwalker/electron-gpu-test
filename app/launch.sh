@@ -193,19 +193,21 @@ fi
 exec "$ELECTRON_BIN" /app \
   "$OZONE_FLAG" \
   "${RENDER_FLAGS[@]}" \
-  --no-sandbox \
   "$@"
 
-# NOTE on --no-sandbox (was --disable-gpu-sandbox):
+# NOTE on the sandbox (was --no-sandbox here, before that --disable-gpu-sandbox):
 # As the non-root 'app' user in a default container, Chromium's setuid/namespace
 # sandbox can't initialise -- it dies with "Failed to move to new namespace ...
-# Operation not permitted" before any page loads. --disable-gpu-sandbox only
-# covers the GPU process, not that one, so it isn't enough on its own.
-# --no-sandbox disables the full sandbox and lets the app start with a plain
-# `docker/podman run` (no --security-opt/--cap-add needed). Acceptable here
-# because this is a controlled GPU-decode test container. To keep the sandbox
-# instead, make chrome-sandbox setuid-root (chmod 4755, owned root) AND run with
-# --security-opt seccomp=unconfined (or --cap-add SYS_ADMIN).
+# Operation not permitted" before any page loads. The sandbox is therefore
+# disabled at the container level via ELECTRON_DISABLE_SANDBOX=1 (set in the
+# Containerfile), the documented Electron equivalent of the --no-sandbox switch.
+# Keeping it as a container env var rather than a flag here means every launch
+# (including any direct `electron` invocation) inherits it, and the app starts
+# with a plain `docker/podman run` (no --security-opt/--cap-add needed).
+# Acceptable here because this is a controlled GPU-decode test container. To keep
+# the sandbox instead, unset ELECTRON_DISABLE_SANDBOX, make chrome-sandbox
+# setuid-root (chmod 4755, owned root) AND run with --security-opt
+# seccomp=unconfined (or --cap-add SYS_ADMIN).
 
 # --- Run-command differences between display servers (NOT in this script) -----
 # X11 (test here first):
