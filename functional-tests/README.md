@@ -36,16 +36,21 @@ functional-tests/
     ├── java/.../BrowserContainerFunctionalTest.java       # nginx + Selenium E2E (standalone Chromium)
     ├── java/.../ElectronAppFunctionalTest.java            # drives the REAL Electron app
     ├── java/.../WebGlWorldWindFunctionalTest.java         # drives the app rendering a NASA WorldWind WebGL globe
+    ├── java/.../WebGlWorldWindSpinFunctionalTest.java     # as above, but the globe spins -> stills + MP4 in Allure
     └── resources/
         ├── web/index.html                                 # page served during the Chromium E2E test
         └── electron/                                      # thin test harness layered on the PRODUCTION image
             ├── harness.Dockerfile                         # FROM electron-gpu-test + ChromeDriver (no Xvfb)
             ├── webgl-harness.Dockerfile                   # as above + vendored offline NASA WorldWind
+            ├── webgl-spin-harness.Dockerfile              # thin layer on webgl-harness adding the spinning page
             ├── test-harness-entrypoint.sh                 # wait for shared X socket -> launch.sh -> ChromeDriver
-            ├── xvfb.Dockerfile                            # standalone Xvfb sidecar image
+            ├── xvfb.Dockerfile                            # standalone Xvfb sidecar image (Xvfb + ffmpeg)
             ├── xvfb-entrypoint.sh                         # serves the X display into the shared socket volume
+            ├── record-start.sh                            # start ffmpeg x11grab raw capture of the display (on demand)
+            ├── record-stop.sh                             # stop capture, transcode to WebM, emit the file
             ├── render-check.html                          # deterministic page the app loads
-            └── webgl-worldwind.html                       # NASA WorldWind globe page (offline) for the WebGL test
+            ├── webgl-worldwind.html                       # NASA WorldWind globe page (offline) for the WebGL test
+            └── webgl-worldwind-spin.html                  # NASA WorldWind globe that spins, for the animation test
 ```
 
 ## Tests
@@ -78,6 +83,19 @@ functional-tests/
   painted a frame, then **captures a screenshot of the rendered globe into the Allure report** and decodes it
   to confirm the frame is a non-blank, multi-colour render (a failed WebGL frame would be uniform black).
 
+- **`WebGlWorldWindSpinFunctionalTest`** — the **WebGL animation** check. It reuses the same image chain and
+  selenium/electron path as `WebGlWorldWindFunctionalTest`, but loads a globe page (`webgl-worldwind-spin.html`,
+  added by a thin `webgl-spin-harness.Dockerfile` layer) that **rotates the camera longitude from wall-clock
+  time every animation frame**, so the globe spins on its own. Over a **~5 second** window the test proves the
+  globe is genuinely animating two independent ways: WorldWind's own **redraw counter keeps climbing**, and
+  two screenshots captured ~5s apart **differ** by a meaningful fraction of pixels (a frozen render would not).
+  Meanwhile the spinning display is **screen-recorded by ffmpeg running in the Xvfb sidecar** — started/stopped
+  on demand via `docker exec` (`record-start.sh` / `record-stop.sh`), so recording is **independent of the
+  container's lifecycle**. ffmpeg's `x11grab` captures **raw** frames (no codec runs during the grab, so it
+  can't lag or drop frames), then `record-stop.sh` **transcodes the capture to WebM** (VP9) and the clip is
+  copied back to the host and attached to the Allure report — alongside the two **still screenshots** bracketing
+  the spin.
+
 ## Run
 
 ```sh
@@ -90,3 +108,21 @@ functional-tests/
 ```
 
 Raw Allure results land in `build/allure-results`.
+
+### Reusing a pre-built production image
+
+By default the suite builds the production image from the repo's `Containerfile`
+on the local Docker daemon (so a bare `./gradlew test` just works). The thin
+test-only harness layers always build `FROM` that image via their
+`ARG BASE_IMAGE`.
+
+If the production image has already been built — e.g. CI builds it once up front
+with buildx + layer cache — set **`ELECTRON_BASE_IMAGE`** to its tag and the
+suite skips the in-JVM build, building the harness layers `FROM` that tag
+instead. This avoids a second, uncached build of the production image inside the
+test JVM (Testcontainers' image build can't read buildx's cache):
+
+```sh
+docker build -t electron-gpu-test:undertest -f ../Containerfile ..
+ELECTRON_BASE_IMAGE=electron-gpu-test:undertest ./gradlew test
+```

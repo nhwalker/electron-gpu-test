@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>webgl worldwind spin</title>
+    <style>
+        html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+        /* Fill the BrowserWindow so the screenshots/video capture the whole globe. */
+        #globe { width: 100vw; height: 100vh; display: block; }
+        #banner {
+            position: fixed; top: 8px; left: 8px; z-index: 10;
+            color: #fff; font: 14px/1.4 monospace; white-space: pre;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="globe">Your browser does not support HTML5 Canvas.</canvas>
+    <div id="banner">initializing WorldWind…</div>
+
+    <!-- NASA WebWorldWind, vendored next to this page so it loads with no network. -->
+    <script src="worldwind.min.js"></script>
+    <script>
+        // How fast the globe spins. Time-based (degrees of camera longitude per
+        // wall-clock second) rather than per-frame, so the rotation reflects real
+        // elapsed time even if requestAnimationFrame is throttled under Xvfb. At
+        // 36 deg/s a full revolution takes 10s, so a ~5s capture sweeps ~180deg --
+        // far more than enough for two screenshots seconds apart to look different.
+        var SPIN_DEG_PER_SEC = 36;
+
+        // Status object the functional test polls via executeScript. `done` flips
+        // true once initialization settles (success OR failure) so the test never
+        // hangs; `ready` flips true after WorldWind paints its first frame;
+        // `spinning` flips true once the animation loop is running and `frames`
+        // counts redraws so the test can prove the globe is actually animating.
+        window.WW_TEST = {
+            done: false,
+            ready: false,
+            spinning: false,
+            frames: 0,
+            webgl: false,
+            glVersion: null,
+            glVendor: null,
+            glRenderer: null,
+            layers: 0,
+            error: null
+        };
+
+        function finish() { window.WW_TEST.done = true; }
+
+        function reportError(e) {
+            var msg = (e && e.stack) ? e.stack : String(e);
+            window.WW_TEST.error = msg;
+            var b = document.getElementById('banner');
+            if (b) { b.textContent = 'ERROR: ' + msg; }
+        }
+        // Catch anything thrown asynchronously inside WorldWind too.
+        window.addEventListener('error', function (ev) {
+            reportError(ev.error || ev.message);
+            finish();
+        });
+        // Safety net: never leave the test waiting if a frame never schedules.
+        setTimeout(finish, 8000);
+
+        try {
+            // WorldWind resolves its bundled imagery (the Blue Marble base layer)
+            // relative to baseUrl; point it at this page's own directory so the
+            // vendored images/ folder is used -- no tile servers, no CDN.
+            WorldWind.configuration.baseUrl = location.href.replace(/[^/]*$/, '');
+
+            var canvas = document.getElementById('globe');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            // Constructing the WorldWindow creates the WebGL context; if WebGL is
+            // unavailable this throws and we fall into catch below.
+            var wwd = new WorldWind.WorldWindow('globe');
+
+            // Offline base imagery shipped with the WorldWind distribution -- the
+            // Blue Marble continents make the spin obvious as longitudes sweep past.
+            wwd.addLayer(new WorldWind.BMNGOneImageLayer());
+
+            // A bright, purely-geometric marker fixed at (0,0). As the camera
+            // longitude sweeps it slides across and off the frame, so even if the
+            // bundled imagery ever failed to load the motion is still unmistakable.
+            var overlay = new WorldWind.RenderableLayer('overlay');
+            var attrs = new WorldWind.ShapeAttributes(null);
+            attrs.interiorColor = new WorldWind.Color(1, 0.35, 0, 0.85);
+            attrs.outlineColor = WorldWind.Color.YELLOW;
+            attrs.outlineWidth = 4;
+            overlay.addRenderable(
+                new WorldWind.SurfaceCircle(new WorldWind.Location(0, 0), 4.0e6, attrs));
+            wwd.addLayer(overlay);
+
+            // Start centred on the marker; the spin loop drives longitude from here.
+            wwd.navigator.lookAtLocation = new WorldWind.Location(0, 0);
+            wwd.navigator.range = 1.6e7;
+
+            // Read WebGL identity straight from the canvas context (the very same
+            // context WorldWind created -- getContext returns the existing one).
+            var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            window.WW_TEST.webgl = !!gl;
+            if (gl) {
+                window.WW_TEST.glVersion = gl.getParameter(gl.VERSION);
+                window.WW_TEST.glVendor = gl.getParameter(gl.VENDOR);
+                var renderer = gl.getParameter(gl.RENDERER);
+                var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+                if (dbg) {
+                    renderer = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || renderer;
+                }
+                window.WW_TEST.glRenderer = renderer;
+            }
+            window.WW_TEST.layers = wwd.layers.length;
+
+            // Continuous spin: each animation frame, advance the camera longitude by
+            // the wall-clock elapsed time and redraw. The first serviced frame also
+            // flips `ready`/`done` so the test can move on while the globe keeps
+            // spinning underneath it.
+            var spinStart = null;
+            function spin(ts) {
+                if (spinStart === null) {
+                    spinStart = ts;
+                    window.WW_TEST.ready = true;
+                    window.WW_TEST.spinning = true;
+                    document.getElementById('banner').textContent =
+                        'WebGL: ' + window.WW_TEST.glRenderer +
+                        '\nlayers: ' + window.WW_TEST.layers +
+                        '\nspinning @ ' + SPIN_DEG_PER_SEC + ' deg/s';
+                    finish();
+                }
+                var elapsedSec = (ts - spinStart) / 1000;
+                // Wrap into [-180, 180) so WorldWind always gets a valid longitude.
+                var lon = (((elapsedSec * SPIN_DEG_PER_SEC + 180) % 360) + 360) % 360 - 180;
+                wwd.navigator.lookAtLocation = new WorldWind.Location(0, lon);
+                wwd.redraw();
+                window.WW_TEST.frames++;
+                requestAnimationFrame(spin);
+            }
+            requestAnimationFrame(spin);
+        } catch (e) {
+            reportError(e);
+            finish();
+        }
+    </script>
+</body>
+</html>

@@ -64,8 +64,31 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the production image ONCE here (buildx + GHA layer cache) and load
+      # it into the runner's Docker daemon. The functional tests then build their
+      # thin harness layers FROM this tag (ELECTRON_BASE_IMAGE below) instead of
+      # rebuilding the production image in-JVM -- Testcontainers' legacy-builder
+      # build can't read the buildx GHA cache, so doing it there would be a
+      # second, fully uncached build of the same image on every run.
+      - name: Build production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          load: true
+          tags: electron-gpu-test:undertest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Run functional tests
         working-directory: functional-tests
+        env:
+          # Build harness layers FROM the image built above rather than
+          # rebuilding the production image inside the test JVM.
+          ELECTRON_BASE_IMAGE: electron-gpu-test:undertest
         run: ./gradlew test
 
       # Raw Allure results, for feeding into an Allure report later.
@@ -86,9 +109,13 @@ jobs:
           path: functional-tests/build/reports/tests/test/
           if-no-files-found: ignore
 
+  # Publish the production image to GHCR on branch/tag pushes. PRs do NOT run
+  # this job: the functional-tests job already builds the production image (and
+  # fails if it doesn't build), so a separate PR build would be redundant.
   build-image:
     name: Build container image
     needs: validate-app
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,9 +123,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Only authenticate when we intend to push (branch/tag pushes, not PRs).
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -121,8 +146,7 @@ jobs:
         with:
           context: .
           file: Containerfile
-          # Build on PRs to verify it compiles; only push on branch/tag pushes.
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
