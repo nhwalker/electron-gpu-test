@@ -1,8 +1,5 @@
 package com.github.nhwalker.electrongputest;
 
-import com.github.dockerjava.api.command.CreateContainerCmd;
-import com.github.dockerjava.api.model.Mount;
-import com.github.dockerjava.api.model.MountType;
 import io.qameta.allure.Attachment;
 import io.qameta.allure.Description;
 import io.qameta.allure.Epic;
@@ -27,13 +24,8 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
-import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -76,15 +68,6 @@ class WebGlWorldWindSpinFunctionalTest {
     // to (launch.sh is started with --remote-debugging-port=9222).
     private static final String DEBUGGER_ADDRESS = "127.0.0.1:9222";
 
-    // The X display the sidecar serves and the app connects to.
-    private static final String DISPLAY = ":99";
-
-    // A named Docker volume shared between the sidecar and the app container, so
-    // the sidecar's X socket is visible to the app (a shared-volume mount is
-    // order-independent, unlike withVolumesFrom which needs the source running).
-    private static final String X11_SOCKET_DIR = "/tmp/.X11-unix";
-    private static final String XSOCK_VOLUME = "electron-gpu-test-xsock";
-
     // The spinning-globe page the production launcher opens (vendored into the image).
     private static final String PAGE_URL = "file:///opt/worldwind/spin.html";
 
@@ -92,22 +75,14 @@ class WebGlWorldWindSpinFunctionalTest {
     // WebM clip in the Allure report.
     private static final Duration CAPTURE_DURATION = Duration.ofSeconds(5);
 
-    // Where record-stop.sh writes the transcoded WebM inside the sidecar.
-    private static final String RECORDING_PATH = "/tmp/recording.webm";
-
-    // Sidecar that provides ONLY the virtual X display, publishing its socket into
-    // the shared volume that the app container also mounts.
+    // Sidecar that provides the virtual X display AND records it (see XvfbContainer).
     @Container
-    static final GenericContainer<?> XVFB = new GenericContainer<>(buildXvfbImage())
-            .withCreateContainerCmdModifier(shareXSocketVolume())
-            .waitingFor(Wait.forLogMessage(".*X-READY.*", 1));
+    static final XvfbContainer XVFB = new XvfbContainer();
 
+    // prepareClient mounts the shared X socket volume, points DISPLAY at the
+    // sidecar, and adds a startup dependency on it.
     @Container
-    static final GenericContainer<?> ELECTRON = new GenericContainer<>(buildHarnessImage())
-            .dependsOn(XVFB)
-            // Mount the same X socket volume and connect to the sidecar's display.
-            .withCreateContainerCmdModifier(shareXSocketVolume())
-            .withEnv("DISPLAY", DISPLAY)
+    static final GenericContainer<?> ELECTRON = XVFB.prepareClient(new GenericContainer<>(buildHarnessImage()))
             // Render WebGL in software via SwiftShader so the GPU-less CI host can
             // still exercise the WebGL path (see launch.sh).
             .withEnv("SOFTWARE_WEBGL", "1")
@@ -210,21 +185,12 @@ class WebGlWorldWindSpinFunctionalTest {
 
     @Step("Start recording the X display (ffmpeg x11grab in the Xvfb sidecar)")
     private static void startRecording() throws IOException, InterruptedException {
-        var result = XVFB.execInContainer("/usr/local/bin/record-start.sh");
-        assertEquals(0, result.getExitCode(),
-                "record-start.sh failed: " + result.getStdout() + result.getStderr());
+        XVFB.startRecording();
     }
 
-    /**
-     * Stops the recording (ffmpeg flushes the raw capture and transcodes it to
-     * WebM inside the sidecar) and copies the resulting clip back to the host.
-     */
     @Step("Stop recording, transcode to WebM, and copy it out of the sidecar")
     private static byte[] stopRecordingAndFetch() throws IOException, InterruptedException {
-        var result = XVFB.execInContainer("/usr/local/bin/record-stop.sh", RECORDING_PATH);
-        assertEquals(0, result.getExitCode(),
-                "record-stop.sh failed: " + result.getStdout() + result.getStderr());
-        return XVFB.copyFileFromContainer(RECORDING_PATH, java.io.InputStream::readAllBytes);
+        return XVFB.stopRecordingAsWebm();
     }
 
     @Step("Attach a WebDriver session to the running Electron app")
@@ -376,32 +342,6 @@ class WebGlWorldWindSpinFunctionalTest {
 
     private static boolean jsBool(RemoteWebDriver driver, String script) {
         return Boolean.TRUE.equals(driver.executeScript(script));
-    }
-
-    /**
-     * Mounts the shared X socket volume at {@code /tmp/.X11-unix}. Docker creates
-     * the named volume on first use; the sidecar's entrypoint clears any stale
-     * socket before recreating it, so reusing a fixed name across runs is safe.
-     */
-    private static Consumer<CreateContainerCmd> shareXSocketVolume() {
-        return cmd -> {
-            List<Mount> existing = cmd.getHostConfig().getMounts();
-            List<Mount> mounts = new ArrayList<>(existing != null ? existing : Collections.<Mount>emptyList());
-            mounts.add(new Mount()
-                    .withType(MountType.VOLUME)
-                    .withSource(XSOCK_VOLUME)
-                    .withTarget(X11_SOCKET_DIR));
-            cmd.getHostConfig().withMounts(mounts);
-        };
-    }
-
-    /** Builds the standalone Xvfb sidecar image (Xvfb + ffmpeg recording scripts). */
-    private static ImageFromDockerfile buildXvfbImage() {
-        return new ImageFromDockerfile("electron-gpu-test:xvfb", false)
-                .withFileFromClasspath("Dockerfile", "electron/xvfb.Dockerfile")
-                .withFileFromClasspath("xvfb-entrypoint.sh", "electron/xvfb-entrypoint.sh")
-                .withFileFromClasspath("record-start.sh", "electron/record-start.sh")
-                .withFileFromClasspath("record-stop.sh", "electron/record-stop.sh");
     }
 
     /**

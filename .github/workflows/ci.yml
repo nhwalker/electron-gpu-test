@@ -83,12 +83,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Same treatment for the Xvfb sidecar image: build it once here (buildx +
+      # GHA cache, separate scope) and load it into the daemon, so XvfbContainer
+      # uses this tag (XVFB_IMAGE below) instead of building it in the test JVM.
+      - name: Build Xvfb sidecar image
+        uses: docker/build-push-action@v6
+        with:
+          context: functional-tests/src/test/resources/electron
+          file: functional-tests/src/test/resources/electron/xvfb.Dockerfile
+          load: true
+          tags: electron-gpu-test:xvfb
+          cache-from: type=gha,scope=xvfb
+          cache-to: type=gha,mode=max,scope=xvfb
+
       - name: Run functional tests
         working-directory: functional-tests
         env:
-          # Build harness layers FROM the image built above rather than
-          # rebuilding the production image inside the test JVM.
+          # Use the images built above rather than rebuilding them in the test JVM.
           ELECTRON_BASE_IMAGE: electron-gpu-test:undertest
+          XVFB_IMAGE: electron-gpu-test:xvfb
         run: ./gradlew test
 
       # Raw Allure results, for feeding into an Allure report later.

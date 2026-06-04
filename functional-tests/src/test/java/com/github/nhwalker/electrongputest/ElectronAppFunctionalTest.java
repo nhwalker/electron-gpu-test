@@ -1,8 +1,5 @@
 package com.github.nhwalker.electrongputest;
 
-import com.github.dockerjava.api.command.CreateContainerCmd;
-import com.github.dockerjava.api.model.Mount;
-import com.github.dockerjava.api.model.MountType;
 import io.qameta.allure.Description;
 import io.qameta.allure.Epic;
 import io.qameta.allure.Feature;
@@ -22,10 +19,6 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -61,28 +54,15 @@ class ElectronAppFunctionalTest {
     // to (launch.sh is started with --remote-debugging-port=9222).
     private static final String DEBUGGER_ADDRESS = "127.0.0.1:9222";
 
-    // The X display the sidecar serves and the app connects to.
-    private static final String DISPLAY = ":99";
-
-    // A named Docker volume shared between the sidecar and the app container, so
-    // the sidecar's X socket is visible to the app (a shared-volume mount is
-    // order-independent, unlike withVolumesFrom which needs the source running).
-    private static final String X11_SOCKET_DIR = "/tmp/.X11-unix";
-    private static final String XSOCK_VOLUME = "electron-gpu-test-xsock";
-
     // Sidecar that provides ONLY the virtual X display, publishing its socket into
-    // the shared volume that the app container also mounts.
+    // a shared volume that the app container also mounts (see XvfbContainer).
     @Container
-    static final GenericContainer<?> XVFB = new GenericContainer<>(buildXvfbImage())
-            .withCreateContainerCmdModifier(shareXSocketVolume())
-            .waitingFor(Wait.forLogMessage(".*X-READY.*", 1));
+    static final XvfbContainer XVFB = new XvfbContainer();
 
+    // prepareClient mounts the shared X socket volume, points DISPLAY at the
+    // sidecar, and adds a startup dependency on it.
     @Container
-    static final GenericContainer<?> ELECTRON = new GenericContainer<>(buildHarnessImage())
-            .dependsOn(XVFB)
-            // Mount the same X socket volume and connect to the sidecar's display.
-            .withCreateContainerCmdModifier(shareXSocketVolume())
-            .withEnv("DISPLAY", DISPLAY)
+    static final GenericContainer<?> ELECTRON = XVFB.prepareClient(new GenericContainer<>(buildHarnessImage()))
             .withExposedPorts(CHROMEDRIVER_PORT)
             .withStartupTimeout(Duration.ofSeconds(240))
             .waitingFor(
@@ -156,32 +136,6 @@ class ElectronAppFunctionalTest {
         return (Boolean) driver.executeScript(
                 "const r = document.getElementById(\"headline\").getBoundingClientRect();"
                         + "return r.width > 0 && r.height > 0");
-    }
-
-    /**
-     * Mounts the shared X socket volume at {@code /tmp/.X11-unix}. Docker creates
-     * the named volume on first use; the sidecar's entrypoint clears any stale
-     * socket before recreating it, so reusing a fixed name across runs is safe.
-     */
-    private static Consumer<CreateContainerCmd> shareXSocketVolume() {
-        return cmd -> {
-            List<Mount> existing = cmd.getHostConfig().getMounts();
-            List<Mount> mounts = new ArrayList<>(existing != null ? existing : Collections.<Mount>emptyList());
-            mounts.add(new Mount()
-                    .withType(MountType.VOLUME)
-                    .withSource(XSOCK_VOLUME)
-                    .withTarget(X11_SOCKET_DIR));
-            cmd.getHostConfig().withMounts(mounts);
-        };
-    }
-
-    /** Builds the standalone Xvfb sidecar image (Xvfb + ffmpeg recording scripts). */
-    private static ImageFromDockerfile buildXvfbImage() {
-        return new ImageFromDockerfile("electron-gpu-test:xvfb", false)
-                .withFileFromClasspath("Dockerfile", "electron/xvfb.Dockerfile")
-                .withFileFromClasspath("xvfb-entrypoint.sh", "electron/xvfb-entrypoint.sh")
-                .withFileFromClasspath("record-start.sh", "electron/record-start.sh")
-                .withFileFromClasspath("record-stop.sh", "electron/record-stop.sh");
     }
 
     /**

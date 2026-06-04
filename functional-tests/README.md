@@ -36,7 +36,9 @@ functional-tests/
     ├── java/.../BrowserContainerFunctionalTest.java       # nginx + Selenium E2E (standalone Chromium)
     ├── java/.../ElectronAppFunctionalTest.java            # drives the REAL Electron app
     ├── java/.../WebGlWorldWindFunctionalTest.java         # drives the app rendering a NASA WorldWind WebGL globe
-    ├── java/.../WebGlWorldWindSpinFunctionalTest.java     # as above, but the globe spins -> stills + MP4 in Allure
+    ├── java/.../WebGlWorldWindSpinFunctionalTest.java     # as above, but the globe spins -> stills + WebM in Allure
+    ├── java/.../XvfbContainer.java                        # reusable module: Xvfb display sidecar + screen recording
+    ├── java/.../ProductionImage.java                      # resolves the production base image (built, or CI-injected)
     └── resources/
         ├── web/index.html                                 # page served during the Chromium E2E test
         └── electron/                                      # thin test harness layered on the PRODUCTION image
@@ -96,6 +98,21 @@ functional-tests/
   copied back to the host and attached to the Allure report — alongside the two **still screenshots** bracketing
   the spin.
 
+## Shared test infrastructure
+
+Cross-cutting helpers used by the tests above, written as small reusable modules
+rather than copied into each test:
+
+- **`XvfbContainer`** — a reusable Testcontainers module (`extends GenericContainer<XvfbContainer>`) for the
+  **Xvfb virtual-display sidecar**. It owns the sidecar image, the shared `/tmp/.X11-unix` socket volume, and
+  the `X-READY` wait. `xvfb.prepareClient(appContainer)` wires an app container to the display (mounts the
+  shared socket volume, sets `DISPLAY`, adds the startup dependency). Because the sidecar also bundles ffmpeg,
+  it exposes `startRecording()` / `stopRecordingAsWebm()` to screen-record the display on demand (raw capture →
+  WebM), as used by the spin test.
+- **`ProductionImage`** — resolves the production `electron-gpu-test` image the harness layers build `FROM`:
+  built from the repo's `Containerfile` by default, or, when `ELECTRON_BASE_IMAGE` is set, a pre-built tag CI
+  injects (see *Reusing a pre-built production image* below).
+
 ## Run
 
 ```sh
@@ -109,20 +126,28 @@ functional-tests/
 
 Raw Allure results land in `build/allure-results`.
 
-### Reusing a pre-built production image
+### Reusing pre-built images
 
-By default the suite builds the production image from the repo's `Containerfile`
-on the local Docker daemon (so a bare `./gradlew test` just works). The thin
-test-only harness layers always build `FROM` that image via their
-`ARG BASE_IMAGE`.
+By default the suite builds the images it needs on the local Docker daemon (so a
+bare `./gradlew test` just works): the **production image** from the repo's
+`Containerfile` (the harness layers build `FROM` it via `ARG BASE_IMAGE`), and
+the **Xvfb sidecar image** (`XvfbContainer`) from the test resources.
 
-If the production image has already been built — e.g. CI builds it once up front
-with buildx + layer cache — set **`ELECTRON_BASE_IMAGE`** to its tag and the
-suite skips the in-JVM build, building the harness layers `FROM` that tag
-instead. This avoids a second, uncached build of the production image inside the
-test JVM (Testcontainers' image build can't read buildx's cache):
+If those images have already been built — e.g. CI builds them once up front with
+buildx + layer cache — point the suite at them with two env vars and it skips the
+in-JVM builds, using the tags directly. This avoids a second, uncached build of
+each image inside the test JVM (Testcontainers' image build can't read buildx's
+cache):
+
+- **`ELECTRON_BASE_IMAGE`** — the production image the harness layers build `FROM`.
+- **`XVFB_IMAGE`** — the Xvfb sidecar image `XvfbContainer` runs.
 
 ```sh
 docker build -t electron-gpu-test:undertest -f ../Containerfile ..
-ELECTRON_BASE_IMAGE=electron-gpu-test:undertest ./gradlew test
+docker build -t electron-gpu-test:xvfb src/test/resources/electron \
+  -f src/test/resources/electron/xvfb.Dockerfile
+
+ELECTRON_BASE_IMAGE=electron-gpu-test:undertest \
+  XVFB_IMAGE=electron-gpu-test:xvfb \
+  ./gradlew test
 ```
