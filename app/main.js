@@ -35,14 +35,16 @@ function createWindow(url) {
 
 // Mutual TLS: when a server asks for a client certificate, Chromium offers the
 // identities found in the app user's NSS DB (populated by setup_cert_store in
-// launch.sh). Electron would auto-pick list[0]; we make that explicit and log it
-// so the choice is visible in the launch log. Server-CA trust needs no handler --
-// importing the CA into NSS is what makes the server cert verify.
-app.on('select-client-certificate', (event, _url, list, callback) => {
-  if (list.length === 0) return; // nothing to offer; let the default path run
+// launch.sh). We pick the first match and log it. The handler MUST call the real
+// callback with a certificate from the list -- if it doesn't, Chromium blocks the
+// whole browser waiting for a selection. Note the app-level event passes
+// webContents and url BEFORE the certificate list (a 5-arg signature). Server-CA
+// trust needs no handler -- importing the CA into NSS is what verifies the server.
+app.on('select-client-certificate', (event, webContents, url, list, callback) => {
+  if (!list || list.length === 0) return; // nothing to offer; let the default path run
   event.preventDefault();
   const chosen = list[0];
-  console.log(`cert-store: selected client certificate "${chosen.subjectName}"`);
+  console.log(`cert-store: selected client certificate "${chosen.subjectName}" for ${url}`);
   callback(chosen);
 });
 
