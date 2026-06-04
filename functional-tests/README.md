@@ -36,7 +36,9 @@ functional-tests/
     ├── java/.../BrowserContainerFunctionalTest.java       # nginx + Selenium E2E (standalone Chromium)
     ├── java/.../ElectronAppFunctionalTest.java            # drives the REAL Electron app
     ├── java/.../WebGlWorldWindFunctionalTest.java         # drives the app rendering a NASA WorldWind WebGL globe
-    ├── java/.../WebGlWorldWindSpinFunctionalTest.java     # as above, but the globe spins -> stills + MP4 in Allure
+    ├── java/.../WebGlWorldWindSpinFunctionalTest.java     # as above, but the globe spins -> stills + WebM in Allure
+    ├── java/.../XvfbContainer.java                        # reusable module: Xvfb display sidecar + screen recording
+    ├── java/.../ProductionImage.java                      # resolves the production base image (built, or CI-injected)
     └── resources/
         ├── web/index.html                                 # page served during the Chromium E2E test
         └── electron/                                      # thin test harness layered on the PRODUCTION image
@@ -95,6 +97,21 @@ functional-tests/
   can't lag or drop frames), then `record-stop.sh` **transcodes the capture to WebM** (VP9) and the clip is
   copied back to the host and attached to the Allure report — alongside the two **still screenshots** bracketing
   the spin.
+
+## Shared test infrastructure
+
+Cross-cutting helpers used by the tests above, written as small reusable modules
+rather than copied into each test:
+
+- **`XvfbContainer`** — a reusable Testcontainers module (`extends GenericContainer<XvfbContainer>`) for the
+  **Xvfb virtual-display sidecar**. It owns the sidecar image, the shared `/tmp/.X11-unix` socket volume, and
+  the `X-READY` wait. `xvfb.prepareClient(appContainer)` wires an app container to the display (mounts the
+  shared socket volume, sets `DISPLAY`, adds the startup dependency). Because the sidecar also bundles ffmpeg,
+  it exposes `startRecording()` / `stopRecordingAsWebm()` to screen-record the display on demand (raw capture →
+  WebM), as used by the spin test.
+- **`ProductionImage`** — resolves the production `electron-gpu-test` image the harness layers build `FROM`:
+  built from the repo's `Containerfile` by default, or, when `ELECTRON_BASE_IMAGE` is set, a pre-built tag CI
+  injects (see *Reusing a pre-built production image* below).
 
 ## Run
 
