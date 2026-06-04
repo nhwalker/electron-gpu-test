@@ -128,12 +128,14 @@ class TlsMtlsFunctionalTest {
             .withEnv("TARGET_URL", PAGE_URL)
             // Drop the CA + client cert/key into the default scan dir; launch.sh's
             // setup_cert_store auto-imports them (CA, plus the client.crt/.key pair).
+            // Force mode 0644: the non-root app user must read these, but OpenSSL
+            // writes private keys 0600 and Testcontainers would copy them root-owned.
             .withCopyFileToContainer(
-                    MountableFile.forClasspathResource("certs/test-ca.crt"), "/certs/test-ca.crt")
+                    MountableFile.forClasspathResource("certs/test-ca.crt", 0644), "/certs/test-ca.crt")
             .withCopyFileToContainer(
-                    MountableFile.forClasspathResource("certs/client.crt"), "/certs/client.crt")
+                    MountableFile.forClasspathResource("certs/client.crt", 0644), "/certs/client.crt")
             .withCopyFileToContainer(
-                    MountableFile.forClasspathResource("certs/client.key"), "/certs/client.key")
+                    MountableFile.forClasspathResource("certs/client.key", 0644), "/certs/client.key")
             .withExposedPorts(CHROMEDRIVER_PORT)
             .withStartupTimeout(Duration.ofSeconds(240))
             .waitingFor(

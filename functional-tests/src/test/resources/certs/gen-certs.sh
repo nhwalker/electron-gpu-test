@@ -38,5 +38,8 @@ gen_leaf server "web" "DNS:web"
 gen_leaf client "electron-gpu-test client" "DNS:electron-gpu-test-client"
 
 rm -f test-ca.srl
+# OpenSSL writes keys 0600; these are throwaway TEST keys that the non-root app
+# user reads inside the container, so keep them world-readable.
+chmod 644 ./*.key
 echo "==> done"
 ls -1 *.crt *.key
