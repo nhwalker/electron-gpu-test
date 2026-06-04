@@ -8,7 +8,6 @@ import io.qameta.allure.Description;
 import io.qameta.allure.Epic;
 import io.qameta.allure.Feature;
 import io.qameta.allure.Step;
-import org.jcodec.api.awt.AWTSequenceEncoder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.openqa.selenium.OutputType;
@@ -21,8 +20,6 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import javax.imageio.ImageIO;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -51,7 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * WebGL animation functional test: drives the REAL electron-gpu-test app loading
  * a NASA WebWorldWind globe that <em>spins continuously</em>, proves the WebGL
  * path animates frame-over-frame on a GPU-less host, and files both still
- * screenshots and a short MP4 of the rotation into the Allure report.
+ * screenshots and a short WebM video of the rotation into the Allure report.
  *
  * It reuses the exact selenium + electron path of {@link WebGlWorldWindFunctionalTest}
  * (Xvfb sidecar sharing an X socket, production {@code /app/launch.sh} with
@@ -64,8 +61,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * climbing; two screenshots captured seconds apart are decoded and differ by a
  * meaningful fraction of pixels (a static frame would barely change); and each of
  * those frames is independently a non-blank, multi-colour render (a failed WebGL
- * frame would be uniform black). The whole ~5s capture is then stitched into an
- * MP4 entirely in-JVM (JCodec) and attached to Allure.
+ * frame would be uniform black). Meanwhile the X display is screen-recorded by
+ * ffmpeg running in the Xvfb sidecar (started/stopped on demand via {@code docker
+ * exec}, capturing raw so the grab never lags, then transcoded to WebM), and the
+ * resulting ~5s clip is attached to Allure.
  *
  * {@code disabledWithoutDocker} so it skips (not fails) where Docker is absent.
  */
@@ -93,16 +92,12 @@ class WebGlWorldWindSpinFunctionalTest {
     // The spinning-globe page the production launcher opens (vendored into the image).
     private static final String PAGE_URL = "file:///opt/worldwind/spin.html";
 
-    // Roughly how long to record the spin for. The Allure clip is stitched from
-    // whatever frames we manage to grab in this window and played back over the
-    // same span, so it lands at about five seconds.
+    // Roughly how long ffmpeg records the spinning display for -- aiming at a ~5s
+    // WebM clip in the Allure report.
     private static final Duration CAPTURE_DURATION = Duration.ofSeconds(5);
 
-    // Video frame size. Screenshots are scaled to this fixed, even (16-divisible)
-    // size before encoding: it keeps H.264 happy regardless of the exact window
-    // viewport size and caps the per-frame heap so a few dozen frames stay cheap.
-    private static final int VIDEO_W = 640;
-    private static final int VIDEO_H = 400;
+    // Where record-stop.sh writes the transcoded WebM inside the sidecar.
+    private static final String RECORDING_PATH = "/tmp/recording.webm";
 
     // Sidecar that provides ONLY the virtual X display, publishing its socket into
     // the shared volume that the app container also mounts.
@@ -168,8 +163,8 @@ class WebGlWorldWindSpinFunctionalTest {
             assertTrue(ua.contains("Electron/41") && ua.contains("electron-gpu-test/") && ua.contains("X11"),
                     "Expected the Electron app on the X11 backend but UA was: " + ua);
 
-            // Record the spin: capture frames for ~5s, asserting along the way the
-            // globe is genuinely animating, then encode the clip into Allure.
+            // Screen-record the spin for ~5s, assert the globe is genuinely
+            // animating, and attach the stills + WebM clip to Allure.
             recordAndAssertSpin(driver);
         } finally {
             driver.quit();
@@ -177,59 +172,63 @@ class WebGlWorldWindSpinFunctionalTest {
     }
 
     /**
-     * Captures screenshots for {@link #CAPTURE_DURATION}, proves the globe is
-     * actually animating, attaches the first/last stills and the stitched MP4 to
-     * Allure. Animation is proven two independent ways: WorldWind's own redraw
-     * counter must climb over the window, and the first and last decoded frames
-     * must differ by a meaningful fraction of pixels.
+     * Screen-records the spinning globe with ffmpeg in the sidecar for
+     * {@link #CAPTURE_DURATION}, proves the globe is actually animating, and
+     * attaches the first/last stills and the WebM clip to Allure. Animation is
+     * proven two independent ways: WorldWind's own redraw counter must climb over
+     * the window, and two screenshots captured ~5s apart must differ by a
+     * meaningful fraction of pixels.
      */
     @Step("Record the spinning globe and assert it animates")
     private static void recordAndAssertSpin(RemoteWebDriver driver) throws IOException, InterruptedException {
         long framesBefore = redrawCount(driver);
 
-        List<BufferedImage> videoFrames = new ArrayList<>();
-        byte[] firstPng = null;
-        byte[] lastPng = null;
-
-        long startNs = System.nanoTime();
-        long endNs = startNs + CAPTURE_DURATION.toNanos();
-        while (System.nanoTime() < endNs) {
-            byte[] png = driver.getScreenshotAs(OutputType.BYTES);
-            if (firstPng == null) {
-                firstPng = png;
-            }
-            lastPng = png;
-            videoFrames.add(scaleForVideo(ImageIO.read(new ByteArrayInputStream(png))));
-            // Pace the loop so we sample across the whole window rather than
-            // spinning the CPU; screenshot latency dominates either way.
-            Thread.sleep(40);
-        }
-        double elapsedSec = (System.nanoTime() - startNs) / 1_000_000_000.0d;
-
-        assertTrue(videoFrames.size() >= 2,
-                "Captured too few frames (" + videoFrames.size() + ") to prove animation");
+        // Start ffmpeg recording the display, then capture stills bracketing the
+        // recorded window so the assertions cover the same span as the video.
+        startRecording();
+        byte[] firstPng = driver.getScreenshotAs(OutputType.BYTES);
+        Thread.sleep(CAPTURE_DURATION.toMillis());
+        byte[] lastPng = driver.getScreenshotAs(OutputType.BYTES);
+        byte[] webm = stopRecordingAndFetch();
 
         long framesAfter = redrawCount(driver);
         assertTrue(framesAfter > framesBefore,
                 "WorldWind's redraw count did not advance (" + framesBefore + " -> " + framesAfter
                         + "); the globe is not animating");
 
-        // The first and last decoded frames must differ -- a static globe would
-        // barely change between two shots seconds apart.
+        // The first and last frames must differ -- a static globe would barely
+        // change between two shots seconds apart.
         assertFramesDiffer(firstPng, lastPng);
 
         // Each captured still must independently be a real, non-blank render.
         assertGlobeRendered(firstPng);
         assertGlobeRendered(lastPng);
 
+        assertTrue(webm.length > 0, "ffmpeg produced an empty WebM recording");
+
         // Attach the evidence: two stills bracketing the spin, then the clip.
         attachFirstFrame(firstPng);
         attachLastFrame(lastPng);
+        attachSpinVideo(webm);
+    }
 
-        // Play the captured frames back over the span they were captured in, so the
-        // clip lands at about CAPTURE_DURATION (~5s) regardless of capture rate.
-        int fps = (int) Math.max(1, Math.min(30, Math.round(videoFrames.size() / elapsedSec)));
-        attachSpinVideo(videoFrames, fps);
+    @Step("Start recording the X display (ffmpeg x11grab in the Xvfb sidecar)")
+    private static void startRecording() throws IOException, InterruptedException {
+        var result = XVFB.execInContainer("/usr/local/bin/record-start.sh");
+        assertEquals(0, result.getExitCode(),
+                "record-start.sh failed: " + result.getStdout() + result.getStderr());
+    }
+
+    /**
+     * Stops the recording (ffmpeg flushes the raw capture and transcodes it to
+     * WebM inside the sidecar) and copies the resulting clip back to the host.
+     */
+    @Step("Stop recording, transcode to WebM, and copy it out of the sidecar")
+    private static byte[] stopRecordingAndFetch() throws IOException, InterruptedException {
+        var result = XVFB.execInContainer("/usr/local/bin/record-stop.sh", RECORDING_PATH);
+        assertEquals(0, result.getExitCode(),
+                "record-stop.sh failed: " + result.getStdout() + result.getStderr());
+        return XVFB.copyFileFromContainer(RECORDING_PATH, java.io.InputStream::readAllBytes);
     }
 
     @Step("Attach a WebDriver session to the running Electron app")
@@ -264,36 +263,10 @@ class WebGlWorldWindSpinFunctionalTest {
         return png;
     }
 
-    /**
-     * Encodes the captured frames into an H.264 MP4 entirely in-JVM (JCodec) and
-     * attaches it to the Allure report, which renders it as an inline {@code
-     * <video>}. No system ffmpeg is involved.
-     */
-    @Step("Encode the captured frames into an MP4 and attach it")
-    @Attachment(value = "NASA WorldWind WebGL globe spin", type = "video/mp4", fileExtension = ".mp4")
-    private static byte[] attachSpinVideo(List<BufferedImage> frames, int fps) throws IOException {
-        Path tmp = Files.createTempFile("worldwind-spin", ".mp4");
-        try {
-            AWTSequenceEncoder encoder = AWTSequenceEncoder.createSequenceEncoder(tmp.toFile(), fps);
-            for (BufferedImage frame : frames) {
-                encoder.encodeImage(frame);
-            }
-            encoder.finish();
-            return Files.readAllBytes(tmp);
-        } finally {
-            Files.deleteIfExists(tmp);
-        }
-    }
-
-    /** Scales a screenshot to the fixed, even video frame size for H.264 encoding. */
-    private static BufferedImage scaleForVideo(BufferedImage src) {
-        BufferedImage out = new BufferedImage(VIDEO_W, VIDEO_H, BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = out.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
-                RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        g.drawImage(src, 0, 0, VIDEO_W, VIDEO_H, null);
-        g.dispose();
-        return out;
+    /** Attaches the ffmpeg-recorded WebM clip; Allure renders it as inline {@code <video>}. */
+    @Attachment(value = "NASA WorldWind WebGL globe spin", type = "video/webm", fileExtension = ".webm")
+    private static byte[] attachSpinVideo(byte[] webm) {
+        return webm;
     }
 
     /**
@@ -426,11 +399,13 @@ class WebGlWorldWindSpinFunctionalTest {
         };
     }
 
-    /** Builds the standalone Xvfb sidecar image. */
+    /** Builds the standalone Xvfb sidecar image (Xvfb + ffmpeg recording scripts). */
     private static ImageFromDockerfile buildXvfbImage() {
         return new ImageFromDockerfile("electron-gpu-test:xvfb", false)
                 .withFileFromClasspath("Dockerfile", "electron/xvfb.Dockerfile")
-                .withFileFromClasspath("xvfb-entrypoint.sh", "electron/xvfb-entrypoint.sh");
+                .withFileFromClasspath("xvfb-entrypoint.sh", "electron/xvfb-entrypoint.sh")
+                .withFileFromClasspath("record-start.sh", "electron/record-start.sh")
+                .withFileFromClasspath("record-stop.sh", "electron/record-stop.sh");
     }
 
     /**

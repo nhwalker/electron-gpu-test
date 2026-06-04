@@ -44,8 +44,10 @@ functional-tests/
             ├── webgl-harness.Dockerfile                   # as above + vendored offline NASA WorldWind
             ├── webgl-spin-harness.Dockerfile              # thin layer on webgl-harness adding the spinning page
             ├── test-harness-entrypoint.sh                 # wait for shared X socket -> launch.sh -> ChromeDriver
-            ├── xvfb.Dockerfile                            # standalone Xvfb sidecar image
+            ├── xvfb.Dockerfile                            # standalone Xvfb sidecar image (Xvfb + ffmpeg)
             ├── xvfb-entrypoint.sh                         # serves the X display into the shared socket volume
+            ├── record-start.sh                            # start ffmpeg x11grab raw capture of the display (on demand)
+            ├── record-stop.sh                             # stop capture, transcode to WebM, emit the file
             ├── render-check.html                          # deterministic page the app loads
             ├── webgl-worldwind.html                       # NASA WorldWind globe page (offline) for the WebGL test
             └── webgl-worldwind-spin.html                  # NASA WorldWind globe that spins, for the animation test
@@ -84,12 +86,15 @@ functional-tests/
 - **`WebGlWorldWindSpinFunctionalTest`** — the **WebGL animation** check. It reuses the same image chain and
   selenium/electron path as `WebGlWorldWindFunctionalTest`, but loads a globe page (`webgl-worldwind-spin.html`,
   added by a thin `webgl-spin-harness.Dockerfile` layer) that **rotates the camera longitude from wall-clock
-  time every animation frame**, so the globe spins on its own. Over a **~5 second** window the test captures
-  screenshots and proves the globe is genuinely animating two independent ways: WorldWind's own **redraw
-  counter keeps climbing**, and the **first and last frames differ** by a meaningful fraction of pixels (a
-  frozen render would not). It attaches both **still screenshots** bracketing the spin and a **~5s MP4 of the
-  rotation** to the Allure report — the clip is stitched from the captured frames **entirely in-JVM** with
-  JCodec (pure Java; no system ffmpeg).
+  time every animation frame**, so the globe spins on its own. Over a **~5 second** window the test proves the
+  globe is genuinely animating two independent ways: WorldWind's own **redraw counter keeps climbing**, and
+  two screenshots captured ~5s apart **differ** by a meaningful fraction of pixels (a frozen render would not).
+  Meanwhile the spinning display is **screen-recorded by ffmpeg running in the Xvfb sidecar** — started/stopped
+  on demand via `docker exec` (`record-start.sh` / `record-stop.sh`), so recording is **independent of the
+  container's lifecycle**. ffmpeg's `x11grab` captures **raw** frames (no codec runs during the grab, so it
+  can't lag or drop frames), then `record-stop.sh` **transcodes the capture to WebM** (VP9) and the clip is
+  copied back to the host and attached to the Allure report — alongside the two **still screenshots** bracketing
+  the spin.
 
 ## Run
 

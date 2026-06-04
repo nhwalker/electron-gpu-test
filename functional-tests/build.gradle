@@ -27,7 +27,6 @@ ext {
     testcontainersVersion = '2.0.5'    // Testcontainers (latest; 2.x renamed modules to testcontainers-*)
     seleniumVersion       = '4.44.0'
     allureVersion         = '2.35.2'
-    jcodecVersion         = '0.2.5'    // Pure-Java H.264/MP4 encoder for the spin video
 }
 
 dependencies {
@@ -51,12 +50,6 @@ dependencies {
     // Allure reporting adapter for JUnit 5, version-aligned via its BOM.
     testImplementation platform("io.qameta.allure:allure-bom:${allureVersion}")
     testImplementation 'io.qameta.allure:allure-junit5'
-
-    // Pure-Java H.264/MP4 encoder. The WorldWind spin test stitches its captured
-    // frames into an MP4 entirely on the JVM (no system ffmpeg), then attaches the
-    // clip to the Allure report. jcodec-javase adds the AWT/BufferedImage bridge
-    // (AWTSequenceEncoder) and pulls in core jcodec transitively.
-    testImplementation "org.jcodec:jcodec-javase:${jcodecVersion}"
 }
 
 // Configure the Allure CLI/report version to match the adapter on the classpath.

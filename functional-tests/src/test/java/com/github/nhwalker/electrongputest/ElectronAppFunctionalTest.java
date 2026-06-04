@@ -180,11 +180,13 @@ class ElectronAppFunctionalTest {
         };
     }
 
-    /** Builds the standalone Xvfb sidecar image. */
+    /** Builds the standalone Xvfb sidecar image (Xvfb + ffmpeg recording scripts). */
     private static ImageFromDockerfile buildXvfbImage() {
         return new ImageFromDockerfile("electron-gpu-test:xvfb", false)
                 .withFileFromClasspath("Dockerfile", "electron/xvfb.Dockerfile")
-                .withFileFromClasspath("xvfb-entrypoint.sh", "electron/xvfb-entrypoint.sh");
+                .withFileFromClasspath("xvfb-entrypoint.sh", "electron/xvfb-entrypoint.sh")
+                .withFileFromClasspath("record-start.sh", "electron/record-start.sh")
+                .withFileFromClasspath("record-stop.sh", "electron/record-stop.sh");
     }
 
     /**
