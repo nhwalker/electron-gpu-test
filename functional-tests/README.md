@@ -126,20 +126,28 @@ rather than copied into each test:
 
 Raw Allure results land in `build/allure-results`.
 
-### Reusing a pre-built production image
+### Reusing pre-built images
 
-By default the suite builds the production image from the repo's `Containerfile`
-on the local Docker daemon (so a bare `./gradlew test` just works). The thin
-test-only harness layers always build `FROM` that image via their
-`ARG BASE_IMAGE`.
+By default the suite builds the images it needs on the local Docker daemon (so a
+bare `./gradlew test` just works): the **production image** from the repo's
+`Containerfile` (the harness layers build `FROM` it via `ARG BASE_IMAGE`), and
+the **Xvfb sidecar image** (`XvfbContainer`) from the test resources.
 
-If the production image has already been built — e.g. CI builds it once up front
-with buildx + layer cache — set **`ELECTRON_BASE_IMAGE`** to its tag and the
-suite skips the in-JVM build, building the harness layers `FROM` that tag
-instead. This avoids a second, uncached build of the production image inside the
-test JVM (Testcontainers' image build can't read buildx's cache):
+If those images have already been built — e.g. CI builds them once up front with
+buildx + layer cache — point the suite at them with two env vars and it skips the
+in-JVM builds, using the tags directly. This avoids a second, uncached build of
+each image inside the test JVM (Testcontainers' image build can't read buildx's
+cache):
+
+- **`ELECTRON_BASE_IMAGE`** — the production image the harness layers build `FROM`.
+- **`XVFB_IMAGE`** — the Xvfb sidecar image `XvfbContainer` runs.
 
 ```sh
 docker build -t electron-gpu-test:undertest -f ../Containerfile ..
-ELECTRON_BASE_IMAGE=electron-gpu-test:undertest ./gradlew test
+docker build -t electron-gpu-test:xvfb src/test/resources/electron \
+  -f src/test/resources/electron/xvfb.Dockerfile
+
+ELECTRON_BASE_IMAGE=electron-gpu-test:undertest \
+  XVFB_IMAGE=electron-gpu-test:xvfb \
+  ./gradlew test
 ```
