@@ -36,16 +36,19 @@ functional-tests/
     ├── java/.../BrowserContainerFunctionalTest.java       # nginx + Selenium E2E (standalone Chromium)
     ├── java/.../ElectronAppFunctionalTest.java            # drives the REAL Electron app
     ├── java/.../WebGlWorldWindFunctionalTest.java         # drives the app rendering a NASA WorldWind WebGL globe
+    ├── java/.../WebGlWorldWindSpinFunctionalTest.java     # as above, but the globe spins -> stills + MP4 in Allure
     └── resources/
         ├── web/index.html                                 # page served during the Chromium E2E test
         └── electron/                                      # thin test harness layered on the PRODUCTION image
             ├── harness.Dockerfile                         # FROM electron-gpu-test + ChromeDriver (no Xvfb)
             ├── webgl-harness.Dockerfile                   # as above + vendored offline NASA WorldWind
+            ├── webgl-spin-harness.Dockerfile              # thin layer on webgl-harness adding the spinning page
             ├── test-harness-entrypoint.sh                 # wait for shared X socket -> launch.sh -> ChromeDriver
             ├── xvfb.Dockerfile                            # standalone Xvfb sidecar image
             ├── xvfb-entrypoint.sh                         # serves the X display into the shared socket volume
             ├── render-check.html                          # deterministic page the app loads
-            └── webgl-worldwind.html                       # NASA WorldWind globe page (offline) for the WebGL test
+            ├── webgl-worldwind.html                       # NASA WorldWind globe page (offline) for the WebGL test
+            └── webgl-worldwind-spin.html                  # NASA WorldWind globe that spins, for the animation test
 ```
 
 ## Tests
@@ -77,6 +80,16 @@ functional-tests/
   `file://` with **no network** at run time. The test asserts the page obtained a live WebGL context and
   painted a frame, then **captures a screenshot of the rendered globe into the Allure report** and decodes it
   to confirm the frame is a non-blank, multi-colour render (a failed WebGL frame would be uniform black).
+
+- **`WebGlWorldWindSpinFunctionalTest`** — the **WebGL animation** check. It reuses the same image chain and
+  selenium/electron path as `WebGlWorldWindFunctionalTest`, but loads a globe page (`webgl-worldwind-spin.html`,
+  added by a thin `webgl-spin-harness.Dockerfile` layer) that **rotates the camera longitude from wall-clock
+  time every animation frame**, so the globe spins on its own. Over a **~5 second** window the test captures
+  screenshots and proves the globe is genuinely animating two independent ways: WorldWind's own **redraw
+  counter keeps climbing**, and the **first and last frames differ** by a meaningful fraction of pixels (a
+  frozen render would not). It attaches both **still screenshots** bracketing the spin and a **~5s MP4 of the
+  rotation** to the Allure report — the clip is stitched from the captured frames **entirely in-JVM** with
+  JCodec (pure Java; no system ffmpeg).
 
 ## Run
 
