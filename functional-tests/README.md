@@ -108,3 +108,21 @@ functional-tests/
 ```
 
 Raw Allure results land in `build/allure-results`.
+
+### Reusing a pre-built production image
+
+By default the suite builds the production image from the repo's `Containerfile`
+on the local Docker daemon (so a bare `./gradlew test` just works). The thin
+test-only harness layers always build `FROM` that image via their
+`ARG BASE_IMAGE`.
+
+If the production image has already been built — e.g. CI builds it once up front
+with buildx + layer cache — set **`ELECTRON_BASE_IMAGE`** to its tag and the
+suite skips the in-JVM build, building the harness layers `FROM` that tag
+instead. This avoids a second, uncached build of the production image inside the
+test JVM (Testcontainers' image build can't read buildx's cache):
+
+```sh
+docker build -t electron-gpu-test:undertest -f ../Containerfile ..
+ELECTRON_BASE_IMAGE=electron-gpu-test:undertest ./gradlew test
+```

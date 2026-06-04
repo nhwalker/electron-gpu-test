@@ -18,19 +18,14 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -190,61 +185,16 @@ class ElectronAppFunctionalTest {
     }
 
     /**
-     * Builds the production image from the repo's {@code Containerfile}, then a
-     * thin harness layer (ChromeDriver only) on top of it. Any host egress-proxy
-     * CA is forwarded so the in-image dnf/npm downloads work behind a TLS-
-     * intercepting proxy; with direct egress this is a harmless no-op.
+     * Builds the thin harness layer (ChromeDriver only) on top of the production
+     * image resolved by {@link ProductionImage#baseImage()} -- built from the
+     * repo's {@code Containerfile}, or a tag injected by CI. The harness
+     * Dockerfile picks the base up via its {@code ARG BASE_IMAGE}.
      */
     private static ImageFromDockerfile buildHarnessImage() {
-        Path repoRoot = Paths.get(System.getProperty("user.dir")).toAbsolutePath().getParent();
-        assertTrue(Files.exists(repoRoot.resolve("Containerfile")),
-                "Could not locate the production Containerfile at " + repoRoot);
-
-        // Build the production image first so the harness can build FROM it.
-        new ImageFromDockerfile("electron-gpu-test:undertest", false)
-                .withFileFromPath("Dockerfile", repoRoot.resolve("Containerfile"))
-                .withFileFromPath("app", repoRoot.resolve("app"))
-                .withFileFromPath("rocky9.repo", repoRoot.resolve("rocky9.repo"))
-                .withFileFromPath("extra-cas", resolveExtraCaDir())
-                .get();
-
         return new ImageFromDockerfile("electron-gpu-test:harness", false)
+                .withBuildArg("BASE_IMAGE", ProductionImage.baseImage())
                 .withFileFromClasspath("Dockerfile", "electron/harness.Dockerfile")
                 .withFileFromClasspath("test-harness-entrypoint.sh", "electron/test-harness-entrypoint.sh")
                 .withFileFromClasspath("render-check.html", "electron/render-check.html");
-    }
-
-    /**
-     * Returns a directory to mount at the production build context's
-     * {@code extra-cas/}. Behind a TLS-intercepting proxy it contains the host CA
-     * bundle so dnf/npm trust the proxy; otherwise it holds only a placeholder so
-     * the Containerfile's COPY succeeds.
-     */
-    private static Path resolveExtraCaDir() {
-        try {
-            Path dir = Files.createTempDirectory("electron-extra-cas");
-            Path hostBundle = Paths.get("/etc/ssl/certs/ca-certificates.crt");
-            if (behindEgressProxy() && Files.exists(hostBundle)) {
-                Files.copy(hostBundle, dir.resolve("host-egress-bundle.crt"));
-            } else {
-                Files.writeString(dir.resolve(".keep"), "");
-            }
-            return dir;
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    /** Detects the sandbox/corporate egress proxy by its installed CA marker. */
-    private static boolean behindEgressProxy() {
-        Path caDir = Paths.get("/usr/local/share/ca-certificates");
-        if (!Files.isDirectory(caDir)) {
-            return false;
-        }
-        try (Stream<Path> stream = Files.list(caDir)) {
-            return stream.anyMatch(p -> p.getFileName().toString().toLowerCase().contains("egress"));
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
     }
 }

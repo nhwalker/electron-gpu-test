@@ -23,13 +23,9 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -409,71 +405,24 @@ class WebGlWorldWindSpinFunctionalTest {
     }
 
     /**
-     * Builds the image chain this test drives: the production image from the repo's
-     * {@code Containerfile}; the WebGL harness on top (ChromeDriver + vendored
-     * offline NASA WorldWind, identical to {@link WebGlWorldWindFunctionalTest} so
-     * the layer cache is shared); and a thin spin layer that adds the spinning
-     * page. Any host egress-proxy CA is forwarded so the in-image dnf/npm downloads
-     * work behind a TLS-intercepting proxy; with direct egress this is a no-op.
+     * Builds this test's image chain: the WebGL harness (ChromeDriver + vendored
+     * offline NASA WorldWind, same tag/context as {@link WebGlWorldWindFunctionalTest}
+     * so the layer cache is shared) on top of the production image from
+     * {@link ProductionImage#baseImage()} (the repo's {@code Containerfile}, or a
+     * CI-injected tag), then a thin spin layer that adds the spinning page.
      */
     private static ImageFromDockerfile buildHarnessImage() {
-        Path repoRoot = Paths.get(System.getProperty("user.dir")).toAbsolutePath().getParent();
-        assertTrue(Files.exists(repoRoot.resolve("Containerfile")),
-                "Could not locate the production Containerfile at " + repoRoot);
-
-        // Build the production image first so the harness can build FROM it.
-        new ImageFromDockerfile("electron-gpu-test:undertest", false)
-                .withFileFromPath("Dockerfile", repoRoot.resolve("Containerfile"))
-                .withFileFromPath("app", repoRoot.resolve("app"))
-                .withFileFromPath("rocky9.repo", repoRoot.resolve("rocky9.repo"))
-                .withFileFromPath("extra-cas", resolveExtraCaDir())
-                .get();
-
-        // Build the WebGL harness (ChromeDriver + offline WorldWind). Same image
-        // tag and context as WebGlWorldWindFunctionalTest, so this reuses its build.
+        // Build the WebGL harness FROM the production base (ARG BASE_IMAGE).
         new ImageFromDockerfile("electron-gpu-test:webgl-harness", false)
+                .withBuildArg("BASE_IMAGE", ProductionImage.baseImage())
                 .withFileFromClasspath("Dockerfile", "electron/webgl-harness.Dockerfile")
                 .withFileFromClasspath("test-harness-entrypoint.sh", "electron/test-harness-entrypoint.sh")
                 .withFileFromClasspath("webgl-worldwind.html", "electron/webgl-worldwind.html")
                 .get();
 
-        // Thin layer on top adding only the spinning page.
+        // Thin layer on top adding only the spinning page (FROM webgl-harness).
         return new ImageFromDockerfile("electron-gpu-test:webgl-spin-harness", false)
                 .withFileFromClasspath("Dockerfile", "electron/webgl-spin-harness.Dockerfile")
                 .withFileFromClasspath("webgl-worldwind-spin.html", "electron/webgl-worldwind-spin.html");
-    }
-
-    /**
-     * Returns a directory to mount at the production build context's
-     * {@code extra-cas/}. Behind a TLS-intercepting proxy it contains the host CA
-     * bundle so dnf/npm trust the proxy; otherwise it holds only a placeholder so
-     * the Containerfile's COPY succeeds.
-     */
-    private static Path resolveExtraCaDir() {
-        try {
-            Path dir = Files.createTempDirectory("electron-extra-cas");
-            Path hostBundle = Paths.get("/etc/ssl/certs/ca-certificates.crt");
-            if (behindEgressProxy() && Files.exists(hostBundle)) {
-                Files.copy(hostBundle, dir.resolve("host-egress-bundle.crt"));
-            } else {
-                Files.writeString(dir.resolve(".keep"), "");
-            }
-            return dir;
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    /** Detects the sandbox/corporate egress proxy by its installed CA marker. */
-    private static boolean behindEgressProxy() {
-        Path caDir = Paths.get("/usr/local/share/ca-certificates");
-        if (!Files.isDirectory(caDir)) {
-            return false;
-        }
-        try (Stream<Path> stream = Files.list(caDir)) {
-            return stream.anyMatch(p -> p.getFileName().toString().toLowerCase().contains("egress"));
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
     }
 }
