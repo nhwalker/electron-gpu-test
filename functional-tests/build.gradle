@@ -1,7 +1,7 @@
 plugins {
     // Java is the test language; the Gradle 'java' plugin compiles src/test/java.
     id 'java'
-    // Allure reporting: wires the AspectJ weaver and the report-generation tasks.
+    // Allure reporting: report-generation tasks (allureReport / allureServe).
     id 'io.qameta.allure' version '4.0.2'
 }
 
@@ -57,10 +57,14 @@ allure {
     version = allureVersion
     adapter {
         // The adapter dependency is declared explicitly above, so leave
-        // autoconfiguration off and just enable the AspectJ weaver that powers
-        // @Step / @Attachment instrumentation.
+        // autoconfiguration off. Steps and attachments use Allure's programmatic
+        // API (Allure.step(...) / Allure.addAttachment(...)), not the annotation
+        // aspects -- so the AspectJ load-time weaver javaagent is NOT needed. That
+        // keeps the instrumentation working when tests run outside Gradle (e.g.
+        // Eclipse's "Run As > JUnit Test", which never attaches the agent), and
+        // sidesteps AspectJ's lack of Java 25 support.
         autoconfigure = false
-        aspectjWeaver = true
+        aspectjWeaver = false
     }
 }
 

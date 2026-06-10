@@ -1,9 +1,9 @@
 package com.github.nhwalker.electrongputest;
 
+import io.qameta.allure.Allure;
 import io.qameta.allure.Description;
 import io.qameta.allure.Epic;
 import io.qameta.allure.Feature;
-import io.qameta.allure.Step;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.openqa.selenium.chrome.ChromeOptions;
@@ -62,16 +62,17 @@ class BrowserContainerFunctionalTest {
         }
     }
 
-    @Step("Open a Chrome session against the browser container")
     private static RemoteWebDriver newSession() {
-        ChromeOptions options = new ChromeOptions();
-        // Standard hardening for Chrome inside a container.
-        options.addArguments("--no-sandbox", "--disable-dev-shm-usage");
-        return new RemoteWebDriver(BROWSER.getSeleniumAddress(), options);
+        return Allure.step("Open a Chrome session against the browser container", () -> {
+            ChromeOptions options = new ChromeOptions();
+            // Standard hardening for Chrome inside a container.
+            options.addArguments("--no-sandbox", "--disable-dev-shm-usage");
+            return new RemoteWebDriver(BROWSER.getSeleniumAddress(), options);
+        });
     }
 
-    @Step("Assert rendered body contains \"{text}\"")
     private static boolean bodyContains(RemoteWebDriver driver, String text) {
-        return driver.getPageSource().contains(text);
+        return Allure.step("Assert rendered body contains \"" + text + "\"",
+                () -> driver.getPageSource().contains(text));
     }
 }

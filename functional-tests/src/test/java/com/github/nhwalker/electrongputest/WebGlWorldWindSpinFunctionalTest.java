@@ -1,10 +1,9 @@
 package com.github.nhwalker.electrongputest;
 
-import io.qameta.allure.Attachment;
+import io.qameta.allure.Allure;
 import io.qameta.allure.Description;
 import io.qameta.allure.Epic;
 import io.qameta.allure.Feature;
-import io.qameta.allure.Step;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.openqa.selenium.OutputType;
@@ -150,85 +149,88 @@ class WebGlWorldWindSpinFunctionalTest {
      * the window, and two screenshots captured ~5s apart must differ by a
      * meaningful fraction of pixels.
      */
-    @Step("Record the spinning globe and assert it animates")
     private static void recordAndAssertSpin(RemoteWebDriver driver) throws IOException, InterruptedException {
-        long framesBefore = redrawCount(driver);
+        Allure.step("Record the spinning globe and assert it animates", () -> {
+            long framesBefore = redrawCount(driver);
 
-        // Start ffmpeg recording the display, then capture stills bracketing the
-        // recorded window so the assertions cover the same span as the video.
-        startRecording();
-        byte[] firstPng = driver.getScreenshotAs(OutputType.BYTES);
-        Thread.sleep(CAPTURE_DURATION.toMillis());
-        byte[] lastPng = driver.getScreenshotAs(OutputType.BYTES);
-        byte[] webm = stopRecordingAndFetch();
+            // Start ffmpeg recording the display, then capture stills bracketing the
+            // recorded window so the assertions cover the same span as the video.
+            startRecording();
+            byte[] firstPng = driver.getScreenshotAs(OutputType.BYTES);
+            Thread.sleep(CAPTURE_DURATION.toMillis());
+            byte[] lastPng = driver.getScreenshotAs(OutputType.BYTES);
+            byte[] webm = stopRecordingAndFetch();
 
-        long framesAfter = redrawCount(driver);
-        assertTrue(framesAfter > framesBefore,
-                "WorldWind's redraw count did not advance (" + framesBefore + " -> " + framesAfter
-                        + "); the globe is not animating");
+            long framesAfter = redrawCount(driver);
+            assertTrue(framesAfter > framesBefore,
+                    "WorldWind's redraw count did not advance (" + framesBefore + " -> " + framesAfter
+                            + "); the globe is not animating");
 
-        // The first and last frames must differ -- a static globe would barely
-        // change between two shots seconds apart.
-        assertFramesDiffer(firstPng, lastPng);
+            // The first and last frames must differ -- a static globe would barely
+            // change between two shots seconds apart.
+            assertFramesDiffer(firstPng, lastPng);
 
-        // Each captured still must independently be a real, non-blank render.
-        assertGlobeRendered(firstPng);
-        assertGlobeRendered(lastPng);
+            // Each captured still must independently be a real, non-blank render.
+            assertGlobeRendered(firstPng);
+            assertGlobeRendered(lastPng);
 
-        assertTrue(webm.length > 0, "ffmpeg produced an empty WebM recording");
+            assertTrue(webm.length > 0, "ffmpeg produced an empty WebM recording");
 
-        // Attach the evidence: two stills bracketing the spin, then the clip.
-        attachFirstFrame(firstPng);
-        attachLastFrame(lastPng);
-        attachSpinVideo(webm);
+            // Attach the evidence: two stills bracketing the spin, then the clip.
+            attachFirstFrame(firstPng);
+            attachLastFrame(lastPng);
+            attachSpinVideo(webm);
+        });
     }
 
-    @Step("Start recording the X display (ffmpeg x11grab in the Xvfb sidecar)")
     private static void startRecording() throws IOException, InterruptedException {
-        XVFB.startRecording();
+        Allure.step("Start recording the X display (ffmpeg x11grab in the Xvfb sidecar)",
+                () -> XVFB.startRecording());
     }
 
-    @Step("Stop recording, transcode to WebM, and copy it out of the sidecar")
     private static byte[] stopRecordingAndFetch() throws IOException, InterruptedException {
-        return XVFB.stopRecordingAsWebm();
+        return Allure.step("Stop recording, transcode to WebM, and copy it out of the sidecar",
+                () -> XVFB.stopRecordingAsWebm());
     }
 
-    @Step("Attach a WebDriver session to the running Electron app")
     private static RemoteWebDriver attachToApp() throws MalformedURLException {
-        ChromeOptions options = new ChromeOptions();
-        // Attach to the app already launched by launch.sh inside the container.
-        options.setExperimentalOption("debuggerAddress", DEBUGGER_ADDRESS);
-        URL url = URI.create("http://" + ELECTRON.getHost() + ":"
-                + ELECTRON.getMappedPort(CHROMEDRIVER_PORT) + "/").toURL();
-        return new RemoteWebDriver(url, options);
+        return Allure.step("Attach a WebDriver session to the running Electron app", () -> {
+            ChromeOptions options = new ChromeOptions();
+            // Attach to the app already launched by launch.sh inside the container.
+            options.setExperimentalOption("debuggerAddress", DEBUGGER_ADDRESS);
+            URL url = URI.create("http://" + ELECTRON.getHost() + ":"
+                    + ELECTRON.getMappedPort(CHROMEDRIVER_PORT) + "/").toURL();
+            return new RemoteWebDriver(url, options);
+        });
     }
 
-    @Step("Wait for WorldWind to finish initializing")
     private static void waitForWorldWindToSettle(RemoteWebDriver driver) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 30_000L;
-        while (System.currentTimeMillis() < deadline) {
-            if (jsBool(driver, "return !!(window.WW_TEST && window.WW_TEST.done)")) {
-                return;
+        Allure.step("Wait for WorldWind to finish initializing", () -> {
+            long deadline = System.currentTimeMillis() + 30_000L;
+            while (System.currentTimeMillis() < deadline) {
+                if (jsBool(driver, "return !!(window.WW_TEST && window.WW_TEST.done)")) {
+                    return;
+                }
+                Thread.sleep(200);
             }
-            Thread.sleep(200);
-        }
-        throw new AssertionError("WorldWind did not finish initializing within 30s");
+            throw new AssertionError("WorldWind did not finish initializing within 30s");
+        });
     }
 
-    @Attachment(value = "NASA WorldWind spin -- first frame", type = "image/png", fileExtension = ".png")
-    private static byte[] attachFirstFrame(byte[] png) {
-        return png;
+    private static void attachFirstFrame(byte[] png) {
+        Allure.addAttachment("NASA WorldWind spin -- first frame", "image/png",
+                new ByteArrayInputStream(png), ".png");
     }
 
-    @Attachment(value = "NASA WorldWind spin -- last frame", type = "image/png", fileExtension = ".png")
-    private static byte[] attachLastFrame(byte[] png) {
-        return png;
+    private static void attachLastFrame(byte[] png) {
+        Allure.addAttachment("NASA WorldWind spin -- last frame", "image/png",
+                new ByteArrayInputStream(png), ".png");
     }
 
     /** Attaches the ffmpeg-recorded WebM clip; Allure renders it as inline {@code <video>}. */
-    @Attachment(value = "NASA WorldWind WebGL globe spin", type = "video/webm", fileExtension = ".webm")
-    private static byte[] attachSpinVideo(byte[] webm) {
-        return webm;
+    private static void attachSpinVideo(byte[] webm) {
+        Allure.addAttachment("NASA WorldWind WebGL globe spin", "video/webm",
+                new ByteArrayInputStream(webm), ".webm");
     }
 
     /**
@@ -236,39 +238,40 @@ class WebGlWorldWindSpinFunctionalTest {
      * between them. The globe spins ~deg/s of camera longitude, so frames captured
      * seconds apart show clearly different terrain; a frozen render would not.
      */
-    @Step("Assert the two captured frames differ (the globe moved)")
     private static void assertFramesDiffer(byte[] firstPng, byte[] lastPng) throws IOException {
-        BufferedImage a = ImageIO.read(new ByteArrayInputStream(firstPng));
-        BufferedImage b = ImageIO.read(new ByteArrayInputStream(lastPng));
-        assertNotNull(a, "First screenshot could not be decoded as an image");
-        assertNotNull(b, "Last screenshot could not be decoded as an image");
+        Allure.step("Assert the two captured frames differ (the globe moved)", () -> {
+            BufferedImage a = ImageIO.read(new ByteArrayInputStream(firstPng));
+            BufferedImage b = ImageIO.read(new ByteArrayInputStream(lastPng));
+            assertNotNull(a, "First screenshot could not be decoded as an image");
+            assertNotNull(b, "Last screenshot could not be decoded as an image");
 
-        int w = Math.min(a.getWidth(), b.getWidth());
-        int h = Math.min(a.getHeight(), b.getHeight());
-        assertTrue(w > 0 && h > 0, "Screenshots had zero size");
+            int w = Math.min(a.getWidth(), b.getWidth());
+            int h = Math.min(a.getHeight(), b.getHeight());
+            assertTrue(w > 0 && h > 0, "Screenshots had zero size");
 
-        int step = Math.max(1, Math.min(w, h) / 120);
-        int samples = 0;
-        int changed = 0;
-        for (int y = 0; y < h; y += step) {
-            for (int x = 0; x < w; x += step) {
-                int ca = a.getRGB(x, y);
-                int cb = b.getRGB(x, y);
-                int dr = Math.abs(((ca >> 16) & 0xff) - ((cb >> 16) & 0xff));
-                int dg = Math.abs(((ca >> 8) & 0xff) - ((cb >> 8) & 0xff));
-                int db = Math.abs((ca & 0xff) - (cb & 0xff));
-                samples++;
-                if (dr + dg + db > 60) {
-                    changed++;
+            int step = Math.max(1, Math.min(w, h) / 120);
+            int samples = 0;
+            int changed = 0;
+            for (int y = 0; y < h; y += step) {
+                for (int x = 0; x < w; x += step) {
+                    int ca = a.getRGB(x, y);
+                    int cb = b.getRGB(x, y);
+                    int dr = Math.abs(((ca >> 16) & 0xff) - ((cb >> 16) & 0xff));
+                    int dg = Math.abs(((ca >> 8) & 0xff) - ((cb >> 8) & 0xff));
+                    int db = Math.abs((ca & 0xff) - (cb & 0xff));
+                    samples++;
+                    if (dr + dg + db > 60) {
+                        changed++;
+                    }
                 }
             }
-        }
 
-        double changedFraction = changed / (double) samples;
-        assertTrue(changedFraction > 0.05d,
-                "The two frames are nearly identical (only "
-                        + String.format("%.2f", changedFraction * 100)
-                        + "% of pixels changed); the globe did not appear to spin");
+            double changedFraction = changed / (double) samples;
+            assertTrue(changedFraction > 0.05d,
+                    "The two frames are nearly identical (only "
+                            + String.format("%.2f", changedFraction * 100)
+                            + "% of pixels changed); the globe did not appear to spin");
+        });
     }
 
     /**
@@ -277,58 +280,59 @@ class WebGlWorldWindSpinFunctionalTest {
      * meaningful fraction of non-background pixels across several distinct colours
      * is strong evidence the globe actually drew.
      */
-    @Step("Assert a captured frame is a non-blank, multi-colour render")
     private static void assertGlobeRendered(byte[] png) throws IOException {
-        BufferedImage img = ImageIO.read(new ByteArrayInputStream(png));
-        assertNotNull(img, "Screenshot could not be decoded as an image");
+        Allure.step("Assert a captured frame is a non-blank, multi-colour render", () -> {
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(png));
+            assertNotNull(img, "Screenshot could not be decoded as an image");
 
-        int w = img.getWidth();
-        int h = img.getHeight();
-        assertTrue(w > 0 && h > 0, "Screenshot had zero size (" + w + "x" + h + ")");
+            int w = img.getWidth();
+            int h = img.getHeight();
+            assertTrue(w > 0 && h > 0, "Screenshot had zero size (" + w + "x" + h + ")");
 
-        int step = Math.max(1, Math.min(w, h) / 120);
-        int samples = 0;
-        int nonBackground = 0;
-        Set<Integer> colors = new HashSet<>();
-        for (int y = 0; y < h; y += step) {
-            for (int x = 0; x < w; x += step) {
-                int rgb = img.getRGB(x, y);
-                int r = (rgb >> 16) & 0xff;
-                int g = (rgb >> 8) & 0xff;
-                int b = rgb & 0xff;
-                samples++;
-                // Anything clearly above the near-black background counts as drawn.
-                if (r + g + b > 48) {
-                    nonBackground++;
+            int step = Math.max(1, Math.min(w, h) / 120);
+            int samples = 0;
+            int nonBackground = 0;
+            Set<Integer> colors = new HashSet<>();
+            for (int y = 0; y < h; y += step) {
+                for (int x = 0; x < w; x += step) {
+                    int rgb = img.getRGB(x, y);
+                    int r = (rgb >> 16) & 0xff;
+                    int g = (rgb >> 8) & 0xff;
+                    int b = rgb & 0xff;
+                    samples++;
+                    // Anything clearly above the near-black background counts as drawn.
+                    if (r + g + b > 48) {
+                        nonBackground++;
+                    }
+                    // Quantise to 4 bits per channel to fold antialiasing noise together.
+                    colors.add(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
                 }
-                // Quantise to 4 bits per channel to fold antialiasing noise together.
-                colors.add(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
             }
-        }
 
-        double nonBackgroundFraction = nonBackground / (double) samples;
-        assertTrue(nonBackgroundFraction > 0.01d,
-                "Rendered frame looks blank: only "
-                        + String.format("%.2f", nonBackgroundFraction * 100)
-                        + "% of pixels were non-background");
-        assertTrue(colors.size() >= 3,
-                "Rendered frame has too few distinct colours (" + colors.size()
-                        + "); WebGL likely did not draw");
+            double nonBackgroundFraction = nonBackground / (double) samples;
+            assertTrue(nonBackgroundFraction > 0.01d,
+                    "Rendered frame looks blank: only "
+                            + String.format("%.2f", nonBackgroundFraction * 100)
+                            + "% of pixels were non-background");
+            assertTrue(colors.size() >= 3,
+                    "Rendered frame has too few distinct colours (" + colors.size()
+                            + "); WebGL likely did not draw");
+        });
     }
 
-    @Step("Read launch.sh output from the container")
     private static String launchLog() throws IOException, InterruptedException {
-        return ELECTRON.execInContainer("cat", "/tmp/electron.log").getStdout();
+        return Allure.step("Read launch.sh output from the container",
+                () -> ELECTRON.execInContainer("cat", "/tmp/electron.log").getStdout());
     }
 
-    @Step("Read navigator.userAgent")
     private static String userAgent(RemoteWebDriver driver) {
-        return (String) driver.executeScript("return navigator.userAgent");
+        return Allure.step("Read navigator.userAgent",
+                () -> (String) driver.executeScript("return navigator.userAgent"));
     }
 
-    @Step("Read the WorldWind initialization error, if any")
     private static String worldWindError(RemoteWebDriver driver) {
-        return (String) driver.executeScript("return window.WW_TEST.error");
+        return Allure.step("Read the WorldWind initialization error, if any",
+                () -> (String) driver.executeScript("return window.WW_TEST.error"));
     }
 
     /** Reads WorldWind's running redraw count (climbs once per animation frame). */

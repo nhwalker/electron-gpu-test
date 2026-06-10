@@ -1,10 +1,9 @@
 package com.github.nhwalker.electrongputest;
 
-import io.qameta.allure.Attachment;
+import io.qameta.allure.Allure;
 import io.qameta.allure.Description;
 import io.qameta.allure.Epic;
 import io.qameta.allure.Feature;
-import io.qameta.allure.Step;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.openqa.selenium.OutputType;
@@ -138,32 +137,37 @@ class WebGlWorldWindFunctionalTest {
         }
     }
 
-    @Step("Attach a WebDriver session to the running Electron app")
     private static RemoteWebDriver attachToApp() throws MalformedURLException {
-        ChromeOptions options = new ChromeOptions();
-        // Attach to the app already launched by launch.sh inside the container.
-        options.setExperimentalOption("debuggerAddress", DEBUGGER_ADDRESS);
-        URL url = URI.create("http://" + ELECTRON.getHost() + ":"
-                + ELECTRON.getMappedPort(CHROMEDRIVER_PORT) + "/").toURL();
-        return new RemoteWebDriver(url, options);
+        return Allure.step("Attach a WebDriver session to the running Electron app", () -> {
+            ChromeOptions options = new ChromeOptions();
+            // Attach to the app already launched by launch.sh inside the container.
+            options.setExperimentalOption("debuggerAddress", DEBUGGER_ADDRESS);
+            URL url = URI.create("http://" + ELECTRON.getHost() + ":"
+                    + ELECTRON.getMappedPort(CHROMEDRIVER_PORT) + "/").toURL();
+            return new RemoteWebDriver(url, options);
+        });
     }
 
-    @Step("Wait for WorldWind to finish initializing")
     private static void waitForWorldWindToSettle(RemoteWebDriver driver) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 30_000L;
-        while (System.currentTimeMillis() < deadline) {
-            if (jsBool(driver, "return !!(window.WW_TEST && window.WW_TEST.done)")) {
-                return;
+        Allure.step("Wait for WorldWind to finish initializing", () -> {
+            long deadline = System.currentTimeMillis() + 30_000L;
+            while (System.currentTimeMillis() < deadline) {
+                if (jsBool(driver, "return !!(window.WW_TEST && window.WW_TEST.done)")) {
+                    return;
+                }
+                Thread.sleep(200);
             }
-            Thread.sleep(200);
-        }
-        throw new AssertionError("WorldWind did not finish initializing within 30s");
+            throw new AssertionError("WorldWind did not finish initializing within 30s");
+        });
     }
 
-    @Step("Capture a screenshot of the rendered WorldWind globe")
-    @Attachment(value = "NASA WorldWind WebGL globe", type = "image/png", fileExtension = ".png")
     private static byte[] worldWindScreenshot(RemoteWebDriver driver) {
-        return driver.getScreenshotAs(OutputType.BYTES);
+        return Allure.step("Capture a screenshot of the rendered WorldWind globe", () -> {
+            byte[] png = driver.getScreenshotAs(OutputType.BYTES);
+            Allure.addAttachment("NASA WorldWind WebGL globe", "image/png",
+                    new ByteArrayInputStream(png), ".png");
+            return png;
+        });
     }
 
     /**
@@ -172,58 +176,59 @@ class WebGlWorldWindFunctionalTest {
      * meaningful fraction of non-background pixels across several distinct colours
      * is strong evidence the globe actually drew.
      */
-    @Step("Assert the captured frame is a non-blank, multi-colour render")
     private static void assertGlobeRendered(byte[] png) throws IOException {
-        BufferedImage img = ImageIO.read(new ByteArrayInputStream(png));
-        assertNotNull(img, "Screenshot could not be decoded as an image");
+        Allure.step("Assert the captured frame is a non-blank, multi-colour render", () -> {
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(png));
+            assertNotNull(img, "Screenshot could not be decoded as an image");
 
-        int w = img.getWidth();
-        int h = img.getHeight();
-        assertTrue(w > 0 && h > 0, "Screenshot had zero size (" + w + "x" + h + ")");
+            int w = img.getWidth();
+            int h = img.getHeight();
+            assertTrue(w > 0 && h > 0, "Screenshot had zero size (" + w + "x" + h + ")");
 
-        int step = Math.max(1, Math.min(w, h) / 120);
-        int samples = 0;
-        int nonBackground = 0;
-        Set<Integer> colors = new HashSet<>();
-        for (int y = 0; y < h; y += step) {
-            for (int x = 0; x < w; x += step) {
-                int rgb = img.getRGB(x, y);
-                int r = (rgb >> 16) & 0xff;
-                int g = (rgb >> 8) & 0xff;
-                int b = rgb & 0xff;
-                samples++;
-                // Anything clearly above the near-black background counts as drawn.
-                if (r + g + b > 48) {
-                    nonBackground++;
+            int step = Math.max(1, Math.min(w, h) / 120);
+            int samples = 0;
+            int nonBackground = 0;
+            Set<Integer> colors = new HashSet<>();
+            for (int y = 0; y < h; y += step) {
+                for (int x = 0; x < w; x += step) {
+                    int rgb = img.getRGB(x, y);
+                    int r = (rgb >> 16) & 0xff;
+                    int g = (rgb >> 8) & 0xff;
+                    int b = rgb & 0xff;
+                    samples++;
+                    // Anything clearly above the near-black background counts as drawn.
+                    if (r + g + b > 48) {
+                        nonBackground++;
+                    }
+                    // Quantise to 4 bits per channel to fold antialiasing noise together.
+                    colors.add(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
                 }
-                // Quantise to 4 bits per channel to fold antialiasing noise together.
-                colors.add(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
             }
-        }
 
-        double nonBackgroundFraction = nonBackground / (double) samples;
-        assertTrue(nonBackgroundFraction > 0.01d,
-                "Rendered frame looks blank: only "
-                        + String.format("%.2f", nonBackgroundFraction * 100)
-                        + "% of pixels were non-background");
-        assertTrue(colors.size() >= 3,
-                "Rendered frame has too few distinct colours (" + colors.size()
-                        + "); WebGL likely did not draw");
+            double nonBackgroundFraction = nonBackground / (double) samples;
+            assertTrue(nonBackgroundFraction > 0.01d,
+                    "Rendered frame looks blank: only "
+                            + String.format("%.2f", nonBackgroundFraction * 100)
+                            + "% of pixels were non-background");
+            assertTrue(colors.size() >= 3,
+                    "Rendered frame has too few distinct colours (" + colors.size()
+                            + "); WebGL likely did not draw");
+        });
     }
 
-    @Step("Read launch.sh output from the container")
     private static String launchLog() throws IOException, InterruptedException {
-        return ELECTRON.execInContainer("cat", "/tmp/electron.log").getStdout();
+        return Allure.step("Read launch.sh output from the container",
+                () -> ELECTRON.execInContainer("cat", "/tmp/electron.log").getStdout());
     }
 
-    @Step("Read navigator.userAgent")
     private static String userAgent(RemoteWebDriver driver) {
-        return (String) driver.executeScript("return navigator.userAgent");
+        return Allure.step("Read navigator.userAgent",
+                () -> (String) driver.executeScript("return navigator.userAgent"));
     }
 
-    @Step("Read the WorldWind initialization error, if any")
     private static String worldWindError(RemoteWebDriver driver) {
-        return (String) driver.executeScript("return window.WW_TEST.error");
+        return Allure.step("Read the WorldWind initialization error, if any",
+                () -> (String) driver.executeScript("return window.WW_TEST.error"));
     }
 
     private static String jsString(RemoteWebDriver driver, String script) {
