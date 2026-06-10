@@ -5,15 +5,12 @@ import com.github.dockerjava.api.model.Mount;
 import com.github.dockerjava.api.model.MountType;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.images.builder.ImageFromDockerfile;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,18 +39,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * {@code prepareClient} mounts the shared socket volume on the client, points its
  * {@code DISPLAY} at this sidecar, and adds a startup dependency on it.
  *
- * <p>By default the sidecar image is built from the test resources on the local
- * Docker daemon (so a bare {@code ./gradlew test} just works). When
- * {@code XVFB_IMAGE} is set -- CI builds the image once, up front (buildx + layer
- * cache) -- that tag is used directly and nothing is rebuilt in the test JVM.
+ * <p>The sidecar image is built BEFORE the test run (see
+ * {@code functional-tests/containers/build-images.sh} and {@link TestImages});
+ * this module only runs the pre-built tag, never builds it.
  */
 public class XvfbContainer extends GenericContainer<XvfbContainer> {
-
-    /** Env var naming a pre-built sidecar image to use instead of building one. */
-    private static final String IMAGE_ENV = "XVFB_IMAGE";
-
-    /** Tag used when this module builds the sidecar image itself. */
-    private static final String IMAGE_TAG = "electron-gpu-test:xvfb";
 
     /** Default X display number served by the sidecar. */
     private static final int DEFAULT_DISPLAY_NUMBER = 99;
@@ -72,7 +62,7 @@ public class XvfbContainer extends GenericContainer<XvfbContainer> {
     }
 
     public XvfbContainer(int displayNumber) {
-        super(resolveImage());
+        super(TestImages.xvfb());
         this.displayNumber = displayNumber;
         // The entrypoint and recording scripts read DISPLAY_NUM for the display.
         withEnv("DISPLAY_NUM", Integer.toString(displayNumber));
@@ -136,25 +126,4 @@ public class XvfbContainer extends GenericContainer<XvfbContainer> {
         };
     }
 
-    /**
-     * Resolves the sidecar image: a pre-built tag injected via {@code XVFB_IMAGE}
-     * (CI builds it once with buildx), or, by default, built from the test
-     * resources on the local Docker daemon.
-     */
-    private static Future<String> resolveImage() {
-        String prebuilt = System.getenv(IMAGE_ENV);
-        if (prebuilt != null && !prebuilt.isBlank()) {
-            return CompletableFuture.completedFuture(prebuilt);
-        }
-        return buildImage();
-    }
-
-    /** Builds the sidecar image (Xvfb + ffmpeg + recording scripts) from test resources. */
-    private static ImageFromDockerfile buildImage() {
-        return new ImageFromDockerfile(IMAGE_TAG, false)
-                .withFileFromClasspath("Dockerfile", "electron/xvfb.Dockerfile")
-                .withFileFromClasspath("xvfb-entrypoint.sh", "electron/xvfb-entrypoint.sh")
-                .withFileFromClasspath("record-start.sh", "electron/record-start.sh")
-                .withFileFromClasspath("record-stop.sh", "electron/record-stop.sh");
-    }
 }

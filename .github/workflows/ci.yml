@@ -49,8 +49,9 @@ jobs:
     name: Functional tests
     needs: validate-app
     runs-on: ubuntu-latest
-    # The suite builds the production image and pulls browser images via
-    # Testcontainers (Docker is preinstalled and running on GitHub runners).
+    # Every image the suite runs is built up front (steps below); Testcontainers
+    # only pulls stock images like nginx/Selenium (Docker is preinstalled and
+    # running on GitHub runners).
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -70,12 +71,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Build the production image ONCE here (buildx + GHA layer cache) and load
-      # it into the runner's Docker daemon. The functional tests then build their
-      # thin harness layers FROM this tag (ELECTRON_BASE_IMAGE below) instead of
-      # rebuilding the production image in-JVM -- Testcontainers' legacy-builder
-      # build can't read the buildx GHA cache, so doing it there would be a
-      # second, fully uncached build of the same image on every run.
+      # ALL images the suite runs are built up front -- the test JVM never builds
+      # images, it only consumes the tags produced here (see TestImages.java).
+      #
+      # The expensive production image is built with buildx + the GHA layer cache
+      # and loaded into the runner's Docker daemon.
       - name: Build production image
         uses: docker/build-push-action@v6
         with:
@@ -86,25 +86,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Same treatment for the Xvfb sidecar image: build it once here (buildx +
-      # GHA cache, separate scope) and load it into the daemon, so XvfbContainer
-      # uses this tag (XVFB_IMAGE below) instead of building it in the test JVM.
+      # Same treatment for the Xvfb sidecar image (separate cache scope).
       - name: Build Xvfb sidecar image
         uses: docker/build-push-action@v6
         with:
-          context: functional-tests/src/test/resources/electron
-          file: functional-tests/src/test/resources/electron/xvfb.Dockerfile
+          context: functional-tests/containers
+          file: functional-tests/containers/xvfb.Dockerfile
           load: true
           tags: electron-gpu-test:xvfb
           cache-from: type=gha,scope=xvfb
           cache-to: type=gha,mode=max,scope=xvfb
 
+      # The thin test-harness layers build FROM the daemon-local production tag,
+      # which buildx's container driver can't see -- so build them with plain
+      # `docker build` via the same script developers use locally. The base and
+      # xvfb targets are skipped here: they were just built (cached) above.
+      - name: Build test harness images
+        env:
+          CONTAINER_TOOL: docker
+        run: functional-tests/containers/build-images.sh harness webgl-harness spin-harness
+
+      # The suite picks the images up by their default tags, which match the
+      # tags built above (override via the env vars documented in TestImages).
       - name: Run functional tests
         working-directory: functional-tests
-        env:
-          # Use the images built above rather than rebuilding them in the test JVM.
-          ELECTRON_BASE_IMAGE: electron-gpu-test:undertest
-          XVFB_IMAGE: electron-gpu-test:xvfb
         run: ./gradlew test
 
       # Raw Allure results, for feeding into an Allure report later.

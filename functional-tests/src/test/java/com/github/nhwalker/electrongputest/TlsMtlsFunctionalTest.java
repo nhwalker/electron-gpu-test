@@ -11,7 +11,6 @@ import org.openqa.selenium.remote.RemoteWebDriver;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.images.builder.ImageFromDockerfile;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.MountableFile;
@@ -99,7 +98,7 @@ class TlsMtlsFunctionalTest {
     // prepareClient mounts the shared X socket volume, points DISPLAY at the
     // sidecar, and adds a startup dependency on it; the app also depends on NGINX.
     @Container
-    static final GenericContainer<?> ELECTRON = XVFB.prepareClient(new GenericContainer<>(buildHarnessImage()))
+    static final GenericContainer<?> ELECTRON = XVFB.prepareClient(new GenericContainer<>(TestImages.harness()))
             .dependsOn(NGINX)
             .withNetwork(NETWORK)
             // Tell the harness entrypoint which page to open via launch.sh.
@@ -124,7 +123,7 @@ class TlsMtlsFunctionalTest {
 
     @Test
     @DisplayName("The production app loads an mTLS page: custom CA trusted + client cert presented")
-    @Description("Builds the production image, serves HTTPS with ssl_verify_client on from an nginx sidecar, mounts the CA + client cert/key into /certs so launch.sh imports them into NSS, and asserts the app rendered the page -- proving both custom-CA trust and mutual TLS.")
+    @Description("Runs the pre-built production image, serves HTTPS with ssl_verify_client on from an nginx sidecar, mounts the CA + client cert/key into /certs so launch.sh imports them into NSS, and asserts the app rendered the page -- proving both custom-CA trust and mutual TLS.")
     void appLoadsMutualTlsPage() throws Exception {
         // launch.sh's cert-store must have imported the mounted CA and client cert.
         String launchLog = launchLog();
@@ -185,20 +184,5 @@ class TlsMtlsFunctionalTest {
                 () -> (Boolean) driver.executeScript(
                         "const r = document.getElementById(\"headline\").getBoundingClientRect();"
                                 + "return r.width > 0 && r.height > 0"));
-    }
-
-    /**
-     * Builds the thin harness layer (ChromeDriver only -- the same harness used by
-     * {@link ElectronAppFunctionalTest}) on top of the production image resolved
-     * by {@link ProductionImage#baseImage()} (the repo's {@code Containerfile}, or
-     * a CI-injected tag). The harness Dockerfile picks the base up via its
-     * {@code ARG BASE_IMAGE}.
-     */
-    private static ImageFromDockerfile buildHarnessImage() {
-        return new ImageFromDockerfile("electron-gpu-test:harness", false)
-                .withBuildArg("BASE_IMAGE", ProductionImage.baseImage())
-                .withFileFromClasspath("Dockerfile", "electron/harness.Dockerfile")
-                .withFileFromClasspath("test-harness-entrypoint.sh", "electron/test-harness-entrypoint.sh")
-                .withFileFromClasspath("render-check.html", "electron/render-check.html");
     }
 }

@@ -23,6 +23,9 @@ A Gradle (Groovy build) project with tests written in **Java 25**, using:
 - A **Docker daemon** for the container-backed tests. Tests that need Docker are
   annotated `@Testcontainers(disabledWithoutDocker = true)`, so they are
   *skipped* rather than failed when Docker is unavailable.
+- The suite's images, **built before the test run** with podman or docker by
+  [`containers/build-images.sh`](./containers/build-images.sh) — the test JVM
+  never builds images (see *Run* below).
 
 ## Layout
 
@@ -31,6 +34,19 @@ functional-tests/
 ├── build.gradle              # plugins, toolchain, dependencies (versions pinned here)
 ├── settings.gradle           # project name + Foojay toolchain resolver
 ├── gradle.properties         # build caching / parallel / configuration cache
+├── containers/               # test images, built BEFORE the test run (not by it)
+│   ├── build-images.sh                                    # builds every image below with podman/docker
+│   ├── harness.Dockerfile                                 # FROM electron-gpu-test + ChromeDriver (no Xvfb)
+│   ├── webgl-harness.Dockerfile                           # as above + vendored offline NASA WorldWind
+│   ├── webgl-spin-harness.Dockerfile                      # thin layer on webgl-harness adding the spinning page
+│   ├── test-harness-entrypoint.sh                         # wait for shared X socket -> launch.sh -> ChromeDriver
+│   ├── xvfb.Dockerfile                                    # standalone Xvfb sidecar image (Xvfb + ffmpeg)
+│   ├── xvfb-entrypoint.sh                                 # serves the X display into the shared socket volume
+│   ├── record-start.sh                                    # start ffmpeg x11grab raw capture of the display (on demand)
+│   ├── record-stop.sh                                     # stop capture, transcode to WebM, emit the file
+│   ├── render-check.html                                  # deterministic page the app loads
+│   ├── webgl-worldwind.html                               # NASA WorldWind globe page (offline) for the WebGL test
+│   └── webgl-worldwind-spin.html                          # NASA WorldWind globe that spins, for the animation test
 └── src/test/
     ├── java/.../StackSmokeTest.java                       # Docker-free wiring checks
     ├── java/.../BrowserContainerFunctionalTest.java       # nginx + Selenium E2E (standalone Chromium)
@@ -38,29 +54,19 @@ functional-tests/
     ├── java/.../WebGlWorldWindFunctionalTest.java         # drives the app rendering a NASA WorldWind WebGL globe
     ├── java/.../WebGlWorldWindSpinFunctionalTest.java     # as above, but the globe spins -> stills + WebM in Allure
     ├── java/.../XvfbContainer.java                        # reusable module: Xvfb display sidecar + screen recording
-    ├── java/.../ProductionImage.java                      # resolves the production base image (built, or CI-injected)
+    ├── java/.../TestImages.java                           # resolves the pre-built image tags the tests run
     └── resources/
         ├── web/index.html                                 # page served during the Chromium E2E test
-        └── electron/                                      # thin test harness layered on the PRODUCTION image
-            ├── harness.Dockerfile                         # FROM electron-gpu-test + ChromeDriver (no Xvfb)
-            ├── webgl-harness.Dockerfile                   # as above + vendored offline NASA WorldWind
-            ├── webgl-spin-harness.Dockerfile              # thin layer on webgl-harness adding the spinning page
-            ├── test-harness-entrypoint.sh                 # wait for shared X socket -> launch.sh -> ChromeDriver
-            ├── xvfb.Dockerfile                            # standalone Xvfb sidecar image (Xvfb + ffmpeg)
-            ├── xvfb-entrypoint.sh                         # serves the X display into the shared socket volume
-            ├── record-start.sh                            # start ffmpeg x11grab raw capture of the display (on demand)
-            ├── record-stop.sh                             # stop capture, transcode to WebM, emit the file
-            ├── render-check.html                          # deterministic page the app loads
-            ├── webgl-worldwind.html                       # NASA WorldWind globe page (offline) for the WebGL test
-            └── webgl-worldwind-spin.html                  # NASA WorldWind globe that spins, for the animation test
+        ├── tls/                                           # nginx mTLS config + page (mounted at run time)
+        └── certs/                                         # pre-generated test CA / server / client certs
 ```
 
 ## Tests
 
 - **`StackSmokeTest`** — Docker-free; verifies the Java 25 toolchain and that every library resolves.
 - **`BrowserContainerFunctionalTest`** — boots nginx + a Selenium **standalone Chromium** container and drives one against the other.
-- **`ElectronAppFunctionalTest`** — Testcontainers builds the **production image** (the repo's
-  `Containerfile`, NVIDIA stack and all), then a thin harness layer on top that adds only a version-matched
+- **`ElectronAppFunctionalTest`** — runs the pre-built **harness image**: the production image (the repo's
+  `Containerfile`, NVIDIA stack and all) plus a thin layer on top that adds only a version-matched
   ChromeDriver. The virtual display comes from a **separate Xvfb sidecar container** that shares its
   `/tmp/.X11-unix` socket with the app via a Docker volume — so the app connects to an X server *outside*
   its container, mirroring how the production image attaches to the host's X server, and the app image
@@ -70,10 +76,10 @@ functional-tests/
   rendered, including a `navigator.userAgent` check proving it's Electron on the X11 backend, not a
   standalone browser.
 
-  Building the production image runs `dnf`/`npm` (downloads Electron + a matching ChromeDriver), so this
-  test needs network access at build time and takes a few minutes on a cold cache. Behind a TLS-intercepting
-  proxy, drop the proxy's CA into the repo root's `extra-cas/` (the test forwards a detected host CA
-  automatically; see the `Containerfile`'s optional CA-trust step).
+  Building the images (done up front by `containers/build-images.sh`, **not** by this test) runs `dnf`/`npm`
+  (downloads Electron + a matching ChromeDriver), so the build needs network access and takes a few minutes
+  on a cold cache. Behind a TLS-intercepting proxy, drop the proxy's CA into the repo root's `extra-cas/`
+  (the script forwards a detected host CA automatically; see the `Containerfile`'s optional CA-trust step).
 
 - **`WebGlWorldWindFunctionalTest`** — the **WebGL** check. It reuses the exact same selenium + electron
   path as `ElectronAppFunctionalTest` (Xvfb sidecar → production `/app/launch.sh` → ChromeDriver attach),
@@ -104,19 +110,23 @@ Cross-cutting helpers used by the tests above, written as small reusable modules
 rather than copied into each test:
 
 - **`XvfbContainer`** — a reusable Testcontainers module (`extends GenericContainer<XvfbContainer>`) for the
-  **Xvfb virtual-display sidecar**. It owns the sidecar image, the shared `/tmp/.X11-unix` socket volume, and
-  the `X-READY` wait. `xvfb.prepareClient(appContainer)` wires an app container to the display (mounts the
-  shared socket volume, sets `DISPLAY`, adds the startup dependency). Because the sidecar also bundles ffmpeg,
-  it exposes `startRecording()` / `stopRecordingAsWebm()` to screen-record the display on demand (raw capture →
-  WebM), as used by the spin test.
-- **`ProductionImage`** — resolves the production `electron-gpu-test` image the harness layers build `FROM`:
-  built from the repo's `Containerfile` by default, or, when `ELECTRON_BASE_IMAGE` is set, a pre-built tag CI
-  injects (see *Reusing a pre-built production image* below).
+  **Xvfb virtual-display sidecar**. It owns the shared `/tmp/.X11-unix` socket volume and the `X-READY` wait.
+  `xvfb.prepareClient(appContainer)` wires an app container to the display (mounts the shared socket volume,
+  sets `DISPLAY`, adds the startup dependency). Because the sidecar also bundles ffmpeg, it exposes
+  `startRecording()` / `stopRecordingAsWebm()` to screen-record the display on demand (raw capture → WebM),
+  as used by the spin test.
+- **`TestImages`** — resolves the pre-built image tags the tests run (harness, WebGL harness, spin harness,
+  Xvfb sidecar). Each accessor defaults to the tag `containers/build-images.sh` produces, overridable per
+  image via an env var (see *Building the images* below), and fails fast with a pointer at the build script
+  if the image is missing from the daemon.
 
 ## Run
 
 ```sh
-# Run all tests (Docker-backed ones skip automatically if Docker is absent).
+# 1. Build the images the suite runs (podman or docker; see the script header).
+containers/build-images.sh
+
+# 2. Run all tests (Docker-backed ones skip automatically if Docker is absent).
 ./gradlew test
 
 # Generate and open the Allure report afterwards.
@@ -126,28 +136,27 @@ rather than copied into each test:
 
 Raw Allure results land in `build/allure-results`.
 
-### Reusing pre-built images
+### Building the images
 
-By default the suite builds the images it needs on the local Docker daemon (so a
-bare `./gradlew test` just works): the **production image** from the repo's
-`Containerfile` (the harness layers build `FROM` it via `ARG BASE_IMAGE`), and
-the **Xvfb sidecar image** (`XvfbContainer`) from the test resources.
+The test JVM **never builds container images** — every image the suite runs is
+built beforehand by [`containers/build-images.sh`](./containers/build-images.sh)
+(podman or docker, auto-detected; override with `CONTAINER_TOOL`). It builds, in
+dependency order: the **production image** from the repo's `Containerfile`, the
+**Xvfb sidecar**, and the three thin **test-harness layers** that build `FROM`
+the production image (`ARG BASE_IMAGE`). Targets can be built selectively, e.g.
+`containers/build-images.sh harness` after an app-only change.
 
-If those images have already been built — e.g. CI builds them once up front with
-buildx + layer cache — point the suite at them with two env vars and it skips the
-in-JVM builds, using the tags directly. This avoids a second, uncached build of
-each image inside the test JVM (Testcontainers' image build can't read buildx's
-cache):
+The suite picks the images up by the script's default tags. To point a test at a
+different pre-built tag (as CI does), set the matching env var:
 
-- **`ELECTRON_BASE_IMAGE`** — the production image the harness layers build `FROM`.
-- **`XVFB_IMAGE`** — the Xvfb sidecar image `XvfbContainer` runs.
+- **`ELECTRON_HARNESS_IMAGE`** — production app + ChromeDriver (default `electron-gpu-test:harness`).
+- **`WEBGL_HARNESS_IMAGE`** — harness + vendored offline NASA WorldWind (default `electron-gpu-test:webgl-harness`).
+- **`WEBGL_SPIN_HARNESS_IMAGE`** — WebGL harness + spinning page (default `electron-gpu-test:webgl-spin-harness`).
+- **`XVFB_IMAGE`** — the Xvfb sidecar `XvfbContainer` runs (default `electron-gpu-test:xvfb`).
 
-```sh
-docker build -t electron-gpu-test:undertest -f ../Containerfile ..
-docker build -t electron-gpu-test:xvfb src/test/resources/electron \
-  -f src/test/resources/electron/xvfb.Dockerfile
-
-ELECTRON_BASE_IMAGE=electron-gpu-test:undertest \
-  XVFB_IMAGE=electron-gpu-test:xvfb \
-  ./gradlew test
-```
+The same vars (plus `ELECTRON_BASE_IMAGE` for the production tag the harness
+layers build `FROM`) override the tags `build-images.sh` produces. In CI the
+expensive production and Xvfb images are built with buildx + the GHA layer cache
+and the script then builds only the thin harness layers on top
+(`build-images.sh harness webgl-harness spin-harness`) — see
+`.github/workflows/ci.yml`.

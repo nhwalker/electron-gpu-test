@@ -10,7 +10,6 @@ import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.remote.RemoteWebDriver;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.images.builder.ImageFromDockerfile;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -33,8 +32,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * model the production image uses against the host's X server -- so the app image
  * itself carries no test-only display tooling.
  *
- * Testcontainers builds the production image (NVIDIA stack and all), then a thin
- * harness layer on top that adds only a version-matched ChromeDriver. The harness
+ * The image chain -- the production image (NVIDIA stack and all) plus a thin
+ * harness layer that adds only a version-matched ChromeDriver -- is built BEFORE
+ * the test run by {@code functional-tests/containers/build-images.sh} (or CI);
+ * this test only runs the pre-built tag (see {@link TestImages}). The harness
  * boots the app through the production {@code /app/launch.sh}, which detects the
  * absence of a GPU and falls back to software rendering -- proving the NVIDIA
  * stack is harmless on a GPU-less host. Selenium then attaches to the running app
@@ -62,7 +63,7 @@ class ElectronAppFunctionalTest {
     // prepareClient mounts the shared X socket volume, points DISPLAY at the
     // sidecar, and adds a startup dependency on it.
     @Container
-    static final GenericContainer<?> ELECTRON = XVFB.prepareClient(new GenericContainer<>(buildHarnessImage()))
+    static final GenericContainer<?> ELECTRON = XVFB.prepareClient(new GenericContainer<>(TestImages.harness()))
             .withExposedPorts(CHROMEDRIVER_PORT)
             .withStartupTimeout(Duration.ofSeconds(240))
             .waitingFor(
@@ -73,7 +74,7 @@ class ElectronAppFunctionalTest {
 
     @Test
     @DisplayName("The production app renders a page via a sidecar X server, with no GPU")
-    @Description("Builds the production image, serves an X display from a sidecar container, boots the real app via launch.sh (software rendering on a GPU-less host), and drives it with Selenium.")
+    @Description("Runs the pre-built production image, serves an X display from a sidecar container, boots the real app via launch.sh (software rendering on a GPU-less host), and drives it with Selenium.")
     void productionAppRendersPage() throws Exception {
         // launch.sh must have taken the no-GPU software path -- i.e. the NVIDIA
         // stack stayed inert rather than failing the launch.
@@ -137,19 +138,5 @@ class ElectronAppFunctionalTest {
                 () -> (Boolean) driver.executeScript(
                         "const r = document.getElementById(\"headline\").getBoundingClientRect();"
                                 + "return r.width > 0 && r.height > 0"));
-    }
-
-    /**
-     * Builds the thin harness layer (ChromeDriver only) on top of the production
-     * image resolved by {@link ProductionImage#baseImage()} -- built from the
-     * repo's {@code Containerfile}, or a tag injected by CI. The harness
-     * Dockerfile picks the base up via its {@code ARG BASE_IMAGE}.
-     */
-    private static ImageFromDockerfile buildHarnessImage() {
-        return new ImageFromDockerfile("electron-gpu-test:harness", false)
-                .withBuildArg("BASE_IMAGE", ProductionImage.baseImage())
-                .withFileFromClasspath("Dockerfile", "electron/harness.Dockerfile")
-                .withFileFromClasspath("test-harness-entrypoint.sh", "electron/test-harness-entrypoint.sh")
-                .withFileFromClasspath("render-check.html", "electron/render-check.html");
     }
 }
