@@ -39,6 +39,9 @@ jobs:
       - name: Syntax-check launch.sh
         run: bash -n app/launch.sh
 
+      - name: Syntax-check setup-certs.sh
+        run: bash -n app/setup-certs.sh
+
       - name: Validate package.json
         run: node -e "JSON.parse(require('fs').readFileSync('app/package.json','utf8'))"
 
