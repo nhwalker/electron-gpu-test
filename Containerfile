@@ -60,8 +60,9 @@ COPY rocky9.repo /etc/yum.repos.d/rocky9.repo
 # flatpak, xdg-desktop-portal, ModemManager, ...) from Rocky and balloon the
 # image. We want only hard deps -- Rocky stays a true last resort.
 # nss-tools (certutil/pk12util) + openssl are NOT Electron runtime libs: they let
-# launch.sh import a runtime-mounted CA bundle and client cert/key into the app
-# user's NSS DB for custom-CA HTTPS and mutual TLS. See setup_cert_store in launch.sh.
+# setup-certs.sh (sourced by launch.sh) import a runtime-mounted CA bundle and
+# client cert/key into the app user's NSS DB for custom-CA HTTPS and mutual TLS.
+# See app/setup-certs.sh.
 RUN dnf -y install --setopt=install_weak_deps=False \
         nss nspr \
         nss-tools openssl \
@@ -124,7 +125,7 @@ COPY ./app/ /app/
 # the launch wrapper executable. Skip Electron's run-time download of extra
 # binaries we don't need.
 RUN npm install --omit=optional && \
-    chmod +x /app/launch.sh && \
+    chmod +x /app/launch.sh /app/setup-certs.sh && \
     npm cache clean --force
 
 # Run as non-root where possible.

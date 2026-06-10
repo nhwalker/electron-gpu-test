@@ -13,6 +13,7 @@ steps.
   - `main.js` — opens one window per URL passed on the command line
   - `package.json` — pins `electron@41.1.1`
   - `launch.sh` — the launch wrapper with all the GPU/Ozone switches
+  - `setup-certs.sh` — imports runtime-mounted TLS certs into the NSS DB (sourced by `launch.sh`)
 - `Containerfile` — builds the image
 
 ## The app
@@ -44,7 +45,7 @@ Run (Wayland/Weston) and the rest of the verification flow are documented in
 
 To reach internal HTTPS endpoints behind a private CA, or servers that require a
 **client certificate** (mutual TLS), mount a directory of PEM files at run time.
-At launch `app/launch.sh` scans it and imports everything into the app user's NSS
+At launch `app/setup-certs.sh` scans it and imports everything into the app user's NSS
 database (`~/.pki/nssdb`) — the store Chromium/Electron consults for extra trusted
 roots and client certificates. No image rebuild is needed.
 
