@@ -11,7 +11,6 @@ import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.remote.RemoteWebDriver;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.images.builder.ImageFromDockerfile;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -78,7 +77,7 @@ class WebGlWorldWindFunctionalTest {
     // prepareClient mounts the shared X socket volume, points DISPLAY at the
     // sidecar, and adds a startup dependency on it.
     @Container
-    static final GenericContainer<?> ELECTRON = XVFB.prepareClient(new GenericContainer<>(buildHarnessImage()))
+    static final GenericContainer<?> ELECTRON = XVFB.prepareClient(new GenericContainer<>(TestImages.webglHarness()))
             // Render WebGL in software via SwiftShader so the GPU-less CI host can
             // still exercise the WebGL path (see launch.sh).
             .withEnv("SOFTWARE_WEBGL", "1")
@@ -94,7 +93,7 @@ class WebGlWorldWindFunctionalTest {
 
     @Test
     @DisplayName("The production app renders a NASA WorldWind WebGL globe, with no GPU")
-    @Description("Builds the production image, boots the real app via launch.sh with SOFTWARE_WEBGL=1 (SwiftShader), loads a vendored offline NASA WorldWind globe, asserts the WebGL frame rendered, and attaches a screenshot to the Allure report.")
+    @Description("Runs the pre-built production image, boots the real app via launch.sh with SOFTWARE_WEBGL=1 (SwiftShader), loads a vendored offline NASA WorldWind globe, asserts the WebGL frame rendered, and attaches a screenshot to the Allure report.")
     void worldWindGlobeRenders() throws Exception {
         // launch.sh must have taken the SwiftShader software-WebGL path -- proving
         // the app can do WebGL on a host with no GPU.
@@ -237,20 +236,5 @@ class WebGlWorldWindFunctionalTest {
 
     private static boolean jsBool(RemoteWebDriver driver, String script) {
         return Boolean.TRUE.equals(driver.executeScript(script));
-    }
-
-    /**
-     * Builds the thin harness layer (ChromeDriver + vendored offline NASA
-     * WorldWind globe + page) on top of the production image resolved by
-     * {@link ProductionImage#baseImage()} -- built from the repo's
-     * {@code Containerfile}, or a tag injected by CI. The harness Dockerfile
-     * picks the base up via its {@code ARG BASE_IMAGE}.
-     */
-    private static ImageFromDockerfile buildHarnessImage() {
-        return new ImageFromDockerfile("electron-gpu-test:webgl-harness", false)
-                .withBuildArg("BASE_IMAGE", ProductionImage.baseImage())
-                .withFileFromClasspath("Dockerfile", "electron/webgl-harness.Dockerfile")
-                .withFileFromClasspath("test-harness-entrypoint.sh", "electron/test-harness-entrypoint.sh")
-                .withFileFromClasspath("webgl-worldwind.html", "electron/webgl-worldwind.html");
     }
 }

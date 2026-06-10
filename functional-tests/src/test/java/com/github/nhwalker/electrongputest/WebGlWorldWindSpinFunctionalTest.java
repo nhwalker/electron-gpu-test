@@ -11,7 +11,6 @@ import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.remote.RemoteWebDriver;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.images.builder.ImageFromDockerfile;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -81,7 +80,7 @@ class WebGlWorldWindSpinFunctionalTest {
     // prepareClient mounts the shared X socket volume, points DISPLAY at the
     // sidecar, and adds a startup dependency on it.
     @Container
-    static final GenericContainer<?> ELECTRON = XVFB.prepareClient(new GenericContainer<>(buildHarnessImage()))
+    static final GenericContainer<?> ELECTRON = XVFB.prepareClient(new GenericContainer<>(TestImages.webglSpinHarness()))
             // Render WebGL in software via SwiftShader so the GPU-less CI host can
             // still exercise the WebGL path (see launch.sh).
             .withEnv("SOFTWARE_WEBGL", "1")
@@ -97,7 +96,7 @@ class WebGlWorldWindSpinFunctionalTest {
 
     @Test
     @DisplayName("The production app renders a NASA WorldWind globe that spins, with no GPU")
-    @Description("Builds the production image, boots the real app via launch.sh with SOFTWARE_WEBGL=1 (SwiftShader), loads a vendored offline NASA WorldWind globe that spins on its own, proves the WebGL frame animates (rising redraw count + two differing screenshots), and attaches both stills and a ~5s MP4 of the rotation to the Allure report.")
+    @Description("Runs the pre-built production image, boots the real app via launch.sh with SOFTWARE_WEBGL=1 (SwiftShader), loads a vendored offline NASA WorldWind globe that spins on its own, proves the WebGL frame animates (rising redraw count + two differing screenshots), and attaches both stills and a ~5s WebM of the rotation to the Allure report.")
     void worldWindGlobeSpins() throws Exception {
         // launch.sh must have taken the SwiftShader software-WebGL path -- proving
         // the app can do WebGL on a host with no GPU.
@@ -346,27 +345,5 @@ class WebGlWorldWindSpinFunctionalTest {
 
     private static boolean jsBool(RemoteWebDriver driver, String script) {
         return Boolean.TRUE.equals(driver.executeScript(script));
-    }
-
-    /**
-     * Builds this test's image chain: the WebGL harness (ChromeDriver + vendored
-     * offline NASA WorldWind, same tag/context as {@link WebGlWorldWindFunctionalTest}
-     * so the layer cache is shared) on top of the production image from
-     * {@link ProductionImage#baseImage()} (the repo's {@code Containerfile}, or a
-     * CI-injected tag), then a thin spin layer that adds the spinning page.
-     */
-    private static ImageFromDockerfile buildHarnessImage() {
-        // Build the WebGL harness FROM the production base (ARG BASE_IMAGE).
-        new ImageFromDockerfile("electron-gpu-test:webgl-harness", false)
-                .withBuildArg("BASE_IMAGE", ProductionImage.baseImage())
-                .withFileFromClasspath("Dockerfile", "electron/webgl-harness.Dockerfile")
-                .withFileFromClasspath("test-harness-entrypoint.sh", "electron/test-harness-entrypoint.sh")
-                .withFileFromClasspath("webgl-worldwind.html", "electron/webgl-worldwind.html")
-                .get();
-
-        // Thin layer on top adding only the spinning page (FROM webgl-harness).
-        return new ImageFromDockerfile("electron-gpu-test:webgl-spin-harness", false)
-                .withFileFromClasspath("Dockerfile", "electron/webgl-spin-harness.Dockerfile")
-                .withFileFromClasspath("webgl-worldwind-spin.html", "electron/webgl-worldwind-spin.html");
     }
 }
