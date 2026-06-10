@@ -59,92 +59,115 @@ gpu_present() {
 #     else $TLS_CLIENT_KEY_PASS, else the key is assumed unencrypted.
 # This is a no-op when the directory is absent or empty, so default runs are
 # unaffected.
+# Containers commonly start non-root users with HOME=/ (not the passwd home),
+# which is unwritable and is NOT where Chromium would look for the NSS DB. Pin
+# HOME to the user's real, writable home and EXPORT it so the exec'd Electron
+# reads the same ~/.pki/nssdb we import into.
+ensure_writable_home() {
+  [[ -n "${HOME:-}" && "$HOME" != "/" && -w "$HOME" ]] && return 0
+  local home_dir
+  home_dir="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+  export HOME="${home_dir:-/home/app}"
+}
+
+# Print all cert/key files under $1 (recursive), NUL-separated and sorted.
+list_cert_files() {
+  find "$1" -type f \( \
+      -iname '*.crt' -o -iname '*.pem' -o -iname '*.cert' -o -iname '*.key' \
+    \) -print0 2>/dev/null | sort -z
+}
+
+# Create an empty-password SQL NSS DB at $1 if one isn't there yet.
+ensure_nssdb() {
+  [[ -f "$1/cert9.db" ]] && return 0
+  mkdir -p "$1"
+  certutil -d "sql:$1" -N --empty-password
+}
+
+# certutil/pk12util reject duplicate nicknames, so derive a unique nickname
+# from $1, remembering past results in USED_NICKS. The result is returned in
+# $NICK rather than on stdout: a $(...) call would run in a subshell and lose
+# the USED_NICKS bookkeeping.
+declare -A USED_NICKS=()
+unique_nick() {
+  local base="$1" i=1
+  NICK="$base"
+  while [[ -n "${USED_NICKS[$NICK]:-}" ]]; do
+    NICK="${base}-$((i++))"
+  done
+  USED_NICKS[$NICK]=1
+}
+
+# If cert file $1 has a sibling key (same stem, .key/.KEY), print its path.
+# A matching key makes the cert a client identity, not a CA.
+sibling_key() {
+  local stem="${1%.*}" ext
+  for ext in key KEY; do
+    [[ -f "$stem.$ext" ]] && { printf '%s' "$stem.$ext"; return 0; }
+  done
+  return 1
+}
+
+# import_client_identity <nssdb> <cert> <key> <nick>
+# Client cert+key -> transient PKCS#12 -> pk12util (NSS can't import a bare
+# PEM key). Passphrase: sibling .pass file, else env fallback, else none.
+import_client_identity() {
+  local nssdb="$1" cert="$2" key="$3" nick="$4"
+
+  local keypass="${TLS_CLIENT_KEY_PASS:-}"
+  [[ -f "${cert%.*}.pass" ]] && keypass="$(<"${cert%.*}.pass")"
+  local -a passin=()
+  [[ -n "$keypass" ]] && passin=(-passin "pass:$keypass")
+
+  local p12 p12pass
+  p12="$(mktemp)"
+  p12pass="$(head -c 18 /dev/urandom | base64)"
+  openssl pkcs12 -export -name "$nick" \
+    -in "$cert" -inkey "$key" "${passin[@]}" \
+    -out "$p12" -passout "pass:$p12pass"
+  pk12util -d "sql:$nssdb" -i "$p12" -W "$p12pass" >/dev/null
+  shred -u "$p12" 2>/dev/null || rm -f "$p12"
+
+  echo "cert-store: imported client cert $nick" >&2
+}
+
+# import_ca_cert <nssdb> <cert> <nick>
+# Standalone cert -> trusted SSL CA. Delete any existing same-nick entry first
+# so re-launches are idempotent.
+import_ca_cert() {
+  local nssdb="$1" cert="$2" nick="$3"
+  certutil -d "sql:$nssdb" -D -n "$nick" >/dev/null 2>&1 || true
+  certutil -d "sql:$nssdb" -A -n "$nick" -t "C,," -i "$cert"
+  echo "cert-store: imported CA $nick" >&2
+}
+
 setup_cert_store() {
   local cert_dir="${TLS_CERT_DIR:-/certs}"
   [[ -d "$cert_dir" ]] || return 0
 
-  # Containers commonly start non-root users with HOME=/ (not the passwd home),
-  # which is unwritable and is NOT where Chromium would look for the NSS DB. Pin
-  # HOME to the user's real, writable home and EXPORT it so the exec'd Electron
-  # reads the same ~/.pki/nssdb we import into.
-  local home_dir="${HOME:-}"
-  if [[ -z "$home_dir" || "$home_dir" == "/" || ! -w "$home_dir" ]]; then
-    home_dir="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
-    home_dir="${home_dir:-/home/app}"
-    export HOME="$home_dir"
-  fi
-  local nssdb="$home_dir/.pki/nssdb"
+  ensure_writable_home
+  local nssdb="$HOME/.pki/nssdb"
 
   # Collect the PEM files once so we can pair certs with keys by stem.
   local -a all_files=()
   local f
   while IFS= read -r -d '' f; do
     all_files+=("$f")
-  done < <(find "$cert_dir" -type f \( \
-              -iname '*.crt' -o -iname '*.pem' -o -iname '*.cert' -o -iname '*.key' \
-            \) -print0 2>/dev/null | sort -z)
+  done < <(list_cert_files "$cert_dir")
   [[ ${#all_files[@]} -gt 0 ]] || return 0
 
-  # Create an empty-password SQL NSS DB if one isn't there yet.
-  if [[ ! -f "$nssdb/cert9.db" ]]; then
-    mkdir -p "$nssdb"
-    certutil -d "sql:$nssdb" -N --empty-password
-  fi
+  ensure_nssdb "$nssdb"
 
-  # certutil/pk12util reject duplicate nicknames; derive a unique nick per file
-  # and delete any prior entry so re-launches are idempotent.
-  local -A used_nicks=()
-  unique_nick() {
-    local base="$1" nick="$1" i=1
-    while [[ -n "${used_nicks[$nick]:-}" ]]; do
-      nick="${base}-${i}"; ((i++))
-    done
-    used_nicks[$nick]=1
-    printf '%s' "$nick"
-  }
-
-  local ca_count=0 client_count=0
+  local ca_count=0 client_count=0 key
   for f in "${all_files[@]}"; do
-    case "${f,,}" in
-      *.key) continue ;;   # keys are handled with their cert below
-    esac
+    [[ "${f,,}" == *.key ]] && continue   # keys are handled with their cert
 
-    local stem="${f%.*}"
-    local key=""
-    # A matching key (same stem) makes this a client identity, not a CA.
-    local ext
-    for ext in key KEY; do
-      [[ -f "$stem.$ext" ]] && { key="$stem.$ext"; break; }
-    done
-
-    local nick
-    nick="$(unique_nick "$(basename "$stem")")"
-
-    if [[ -n "$key" ]]; then
-      # Client cert+key -> transient PKCS#12 -> pk12util (NSS can't import a bare
-      # PEM key). Passphrase: sibling .pass file, else env fallback, else none.
-      local keypass="${TLS_CLIENT_KEY_PASS:-}"
-      [[ -f "$stem.pass" ]] && keypass="$(<"$stem.pass")"
-
-      local p12 p12pass
-      p12="$(mktemp)"
-      p12pass="$(head -c 18 /dev/urandom | base64)"
-
-      local -a passin=()
-      [[ -n "$keypass" ]] && passin=(-passin "pass:$keypass")
-      openssl pkcs12 -export -name "$nick" \
-        -in "$f" -inkey "$key" "${passin[@]}" \
-        -out "$p12" -passout "pass:$p12pass"
-      pk12util -d "sql:$nssdb" -i "$p12" -W "$p12pass" >/dev/null
-      shred -u "$p12" 2>/dev/null || rm -f "$p12"
-
-      echo "cert-store: imported client cert $nick" >&2
+    unique_nick "$(basename "${f%.*}")"
+    if key="$(sibling_key "$f")"; then
+      import_client_identity "$nssdb" "$f" "$key" "$NICK"
       ((client_count++)) || true
     else
-      # Standalone cert -> trusted SSL CA. Replace any existing same-nick entry.
-      certutil -d "sql:$nssdb" -D -n "$nick" >/dev/null 2>&1 || true
-      certutil -d "sql:$nssdb" -A -n "$nick" -t "C,," -i "$f"
-      echo "cert-store: imported CA $nick" >&2
+      import_ca_cert "$nssdb" "$f" "$NICK"
       ((ca_count++)) || true
     fi
   done
