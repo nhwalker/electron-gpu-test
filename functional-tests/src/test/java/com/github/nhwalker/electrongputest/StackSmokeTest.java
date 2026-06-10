@@ -1,9 +1,9 @@
 package com.github.nhwalker.electrongputest;
 
+import io.qameta.allure.Allure;
 import io.qameta.allure.Description;
 import io.qameta.allure.Epic;
 import io.qameta.allure.Feature;
-import io.qameta.allure.Step;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -37,13 +37,14 @@ class StackSmokeTest {
         assertTrue(libraryPresent("org.junit.jupiter.api.Test"), "JUnit Jupiter missing");
     }
 
-    @Step("Resolve class {className}")
     private static boolean libraryPresent(String className) {
-        try {
-            Class.forName(className);
-            return true;
-        } catch (ClassNotFoundException ignored) {
-            return false;
-        }
+        return Allure.step("Resolve class " + className, () -> {
+            try {
+                Class.forName(className);
+                return true;
+            } catch (ClassNotFoundException ignored) {
+                return false;
+            }
+        });
     }
 }

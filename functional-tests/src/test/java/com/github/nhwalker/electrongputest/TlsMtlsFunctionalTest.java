@@ -1,9 +1,9 @@
 package com.github.nhwalker.electrongputest;
 
+import io.qameta.allure.Allure;
 import io.qameta.allure.Description;
 import io.qameta.allure.Epic;
 import io.qameta.allure.Feature;
-import io.qameta.allure.Step;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.openqa.selenium.chrome.ChromeOptions;
@@ -155,35 +155,36 @@ class TlsMtlsFunctionalTest {
         }
     }
 
-    @Step("Attach a WebDriver session to the running Electron app")
     private static RemoteWebDriver attachToApp() throws MalformedURLException {
-        ChromeOptions options = new ChromeOptions();
-        options.setExperimentalOption("debuggerAddress", DEBUGGER_ADDRESS);
-        URL url = URI.create("http://" + ELECTRON.getHost() + ":"
-                + ELECTRON.getMappedPort(CHROMEDRIVER_PORT) + "/").toURL();
-        return new RemoteWebDriver(url, options);
+        return Allure.step("Attach a WebDriver session to the running Electron app", () -> {
+            ChromeOptions options = new ChromeOptions();
+            options.setExperimentalOption("debuggerAddress", DEBUGGER_ADDRESS);
+            URL url = URI.create("http://" + ELECTRON.getHost() + ":"
+                    + ELECTRON.getMappedPort(CHROMEDRIVER_PORT) + "/").toURL();
+            return new RemoteWebDriver(url, options);
+        });
     }
 
-    @Step("Read launch.sh output from the container")
     private static String launchLog() throws IOException, InterruptedException {
-        return ELECTRON.execInContainer("cat", "/tmp/electron.log").getStdout();
+        return Allure.step("Read launch.sh output from the container",
+                () -> ELECTRON.execInContainer("cat", "/tmp/electron.log").getStdout());
     }
 
-    @Step("Read the headline text")
     private static String headlineText(RemoteWebDriver driver) {
-        return (String) driver.executeScript("return document.getElementById(\"headline\").textContent");
+        return Allure.step("Read the headline text",
+                () -> (String) driver.executeScript("return document.getElementById(\"headline\").textContent"));
     }
 
-    @Step("Read navigator.userAgent")
     private static String userAgent(RemoteWebDriver driver) {
-        return (String) driver.executeScript("return navigator.userAgent");
+        return Allure.step("Read navigator.userAgent",
+                () -> (String) driver.executeScript("return navigator.userAgent"));
     }
 
-    @Step("Check the headline rendered with a non-zero box")
     private static boolean headlineIsVisible(RemoteWebDriver driver) {
-        return (Boolean) driver.executeScript(
-                "const r = document.getElementById(\"headline\").getBoundingClientRect();"
-                        + "return r.width > 0 && r.height > 0");
+        return Allure.step("Check the headline rendered with a non-zero box",
+                () -> (Boolean) driver.executeScript(
+                        "const r = document.getElementById(\"headline\").getBoundingClientRect();"
+                                + "return r.width > 0 && r.height > 0"));
     }
 
     /**
