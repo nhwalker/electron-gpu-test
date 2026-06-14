@@ -9,3 +9,6 @@ Containerfile.localtest
 
 # Local-only proxy CA certs injected for sandboxed builds (never commit)
 extra-cas/*.crt
+
+# Built RPM artifacts (produced by packaging/build-rpm.sh)
+packaging/dist/

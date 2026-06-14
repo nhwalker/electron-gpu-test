@@ -18,6 +18,30 @@ steps.
 - `Containerfile` — Electron image, `FROM` the base
 - `Containerfile.firefox` — Firefox image, `FROM` the base
 
+## RPM packaging
+
+The Electron app can also be built as an RPM (`packaging/electron-gpu-test.spec`).
+It bundles the prebuilt Electron runtime into a self-contained tree at
+`/usr/lib/electron-gpu-test/` and puts `electron-gpu-test` on `PATH`:
+
+```sh
+# Build it where nodejs/npm + rpm-build are available, e.g. on the shared base:
+docker run --rm -v "$PWD":/src -w /src browser-base:undertest bash -c \
+  'dnf -y install nodejs npm rpm-build && packaging/build-rpm.sh'
+# -> packaging/dist/electron-gpu-test-<ver>.el9.x86_64.rpm
+
+dnf install ./packaging/dist/electron-gpu-test-*.rpm
+electron-gpu-test https://example.com
+```
+
+`packaging/build-rpm.sh` runs `npm install` up front and tars the result, so the
+spec only stages files — no network or nodejs at `rpmbuild` time. The launcher
+(`launch.sh`) resolves its own location, so it works both in the container
+(`/app`) and from the RPM (`/usr/lib/electron-gpu-test`). Auto RPM dependency
+generation is disabled for the bundled runtime (so its private `libEGL`/`libGLESv2`
+sonames aren't advertised as system `Provides`); the real runtime libraries are
+declared as explicit `Requires` instead.
+
 ## The app
 
 It's deliberately tiny: it opens the web pages named as CLI arguments, one

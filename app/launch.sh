@@ -5,9 +5,14 @@
 # because we use the nvidia-vaapi-driver "direct" backend.
 set -euo pipefail
 
-# The Electron binary that npm installed into the app's node_modules. The
-# Containerfile installs the app (and its electron devDependency) under /app.
-ELECTRON_BIN="${ELECTRON_BIN:-/app/node_modules/electron/dist/electron}"
+# Resolve where this script (and the app shipped alongside it) actually lives,
+# following symlinks, so the launcher works both in the container (/app) and when
+# installed from the RPM (/usr/lib/electron-gpu-test, reached via /usr/bin/<name>).
+APP_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+# The Electron binary that npm installed into the app's node_modules, next to this
+# script. Override with ELECTRON_BIN.
+ELECTRON_BIN="${ELECTRON_BIN:-$APP_DIR/node_modules/electron/dist/electron}"
 
 # --- Pick the Ozone platform ---
 # For deterministic early testing, force x11 by exporting OZONE=x11.
@@ -46,7 +51,7 @@ gpu_present() {
 # Done by setup-certs.sh (PEM files mounted at /certs, or TLS_CERT_DIR). SOURCED
 # rather than executed: it may export a corrected HOME, which the exec'd
 # Electron must inherit to read the same ~/.pki/nssdb the certs go into.
-source "$(dirname "${BASH_SOURCE[0]}")/setup-certs.sh"
+source "$APP_DIR/setup-certs.sh"
 
 if gpu_present; then
   RENDER_FLAGS=(
@@ -84,7 +89,7 @@ else
   fi
 fi
 
-exec "$ELECTRON_BIN" /app \
+exec "$ELECTRON_BIN" "$APP_DIR" \
   "$OZONE_FLAG" \
   "${RENDER_FLAGS[@]}" \
   --no-sandbox \
