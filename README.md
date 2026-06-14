@@ -41,6 +41,42 @@ podman run --rm --device nvidia.com/gpu=all \
 Run (Wayland/Weston) and the rest of the verification flow are documented in
 `plan.md` and `app/launch.sh`.
 
+## Persistent web storage (sessions, cookies, cache)
+
+The container is ephemeral, so by default every cookie, `localStorage`,
+`IndexedDB`, Cache Storage, and service worker is discarded when the container
+stops — pages start logged out with a cold cache each run. To keep them, set
+`ELECTRON_USER_DATA` to a path and mount a volume there: `main.js` relocates
+Electron's `userData` directory to it, and the storage rides along on the
+volume.
+
+```sh
+podman run --rm --device nvidia.com/gpu=all \
+  -e OZONE=x11 -e DISPLAY="$DISPLAY" \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+  -v "$XAUTHORITY":/home/app/.Xauthority:ro -e XAUTHORITY=/home/app/.Xauthority \
+  -e ELECTRON_USER_DATA=/data/profile \
+  -v electron-profile:/data/profile:U \
+  electron-gpu-test https://webrtc.github.io/samples/
+```
+
+Notes:
+
+- A **named volume** (`electron-profile` above) is kept independently of the
+  container and re-attached on the next run, so storage "reloads with the
+  container". A host bind-mount (`-v /host/path:/data/profile:U`) works too if
+  you want the files on the host.
+- The app runs as the non-root `app` user (uid 1001). A fresh named volume is
+  root-owned and unwritable; podman's **`:U`** mount flag chowns it to the
+  container user. Without writable storage `launch.sh` exits with a fix-it
+  message rather than letting Chromium fail obscurely.
+- Leaving `ELECTRON_USER_DATA` unset keeps the previous behavior (storage under
+  the default `~/.config/electron-gpu-test`, discarded with the container).
+- **Per-origin isolation:** each window opens in its own persistent session
+  partition keyed by the page's origin, so different sites can't read each
+  other's cookies/storage and each remembers its own login independently. This
+  is separate from the TLS trust store below.
+
 ## Runtime TLS / mutual TLS
 
 To reach internal HTTPS endpoints behind a private CA, or servers that require a
