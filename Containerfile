@@ -15,22 +15,24 @@
 ARG BASE_IMAGE=browser-base:undertest
 FROM ${BASE_IMAGE}
 
-# --- Chromium-only runtime shared libraries (REQUIRED) ------------------------
-# Just the libs a prebuilt Electron binary hard-loads that the shared base does
-# NOT already provide. The whole GTK/X GUI toolkit (gtk3, atk, at-spi2, cairo,
-# pango, gdk-pixbuf2, the libX*/libxkbcommon/libwayland stack, alsa-lib, cups-libs,
-# ...), the GPU/mesa/libva libs and the NSS libs all come from the base, so a
-# no-cache RPM diff confirmed only these three are Electron-unique:
-#   libXScrnSaver    - the X screensaver lib Chromium uses to inhibit blanking
-#   libxkbcommon-x11 - X11 keyboard mapping for the X11 Ozone path (from Rocky)
-#   libnotify        - the HTML5 Notifications API (from Rocky)
-# A miss here should fail the build. install_weak_deps=False so Rocky stays a
-# last resort.
-RUN dnf -y install --setopt=install_weak_deps=False \
-        libXScrnSaver \
-        libxkbcommon-x11 \
-        libnotify && \
-    dnf clean all
+# --- Chromium runtime shared libraries ----------------------------------------
+# Nothing is installed here: the shared base already provides every library a
+# prebuilt Electron binary hard-loads (the whole GTK/X GUI toolkit, gtk3, atk,
+# at-spi2, cairo, pango, gdk-pixbuf2, the libX*/libxkbcommon/libwayland stack,
+# alsa-lib, cups-libs, ..., plus the GPU/mesa/libva and NSS libs).
+#
+# Three packages from the canonical Electron-on-Linux dependency lists were
+# removed after a binary analysis of this build (Electron 41 / Chromium 146)
+# showed none are load-time (NEEDED) deps -- Electron starts without them:
+#   libXScrnSaver    - X11 MIT-SCREEN-SAVER ext (legacy idle time / screensaver
+#                      inhibit). Not referenced by this binary; Chromium now does
+#                      idle + inhibit over D-Bus (org.freedesktop.ScreenSaver).
+#   libxkbcommon-x11 - loads the keymap from the X server. Not referenced; this
+#                      build uses only CORE libxkbcommon (provided by the base) to
+#                      compile keymaps from layout names.
+#   libnotify        - dlopen'd for the Notifications API. Without it the app runs
+#                      fine but desktop notifications won't display. Re-add it here
+#                      (dnf -y install libnotify) if you need notifications.
 
 # --- Node.js (build-time only): used to npm-install the Electron app below.
 # The app runs on Electron's own bundled Node at runtime, not this one. ---
