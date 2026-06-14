@@ -48,6 +48,24 @@ gpu_present() {
 # Electron must inherit to read the same ~/.pki/nssdb the certs go into.
 source "$(dirname "${BASH_SOURCE[0]}")/setup-certs.sh"
 
+# --- Persistent web storage volume --------------------------------------------
+# main.js relocates Electron's userData (cookies, localStorage, IndexedDB, cache,
+# service workers) to $ELECTRON_USER_DATA when set, so it can be mounted as a
+# volume and survive container recreation. We run as the non-root 'app' user
+# (uid 1001); a freshly created named volume is owned by root and unwritable, and
+# Chromium would then die obscurely. Create the dir if we can and fail fast with
+# a fix if we can't, rather than letting that happen.
+if [[ -n "${ELECTRON_USER_DATA:-}" ]]; then
+  mkdir -p "$ELECTRON_USER_DATA" 2>/dev/null || true
+  if [[ ! -w "$ELECTRON_USER_DATA" ]]; then
+    echo "launch.sh: ELECTRON_USER_DATA=$ELECTRON_USER_DATA is not writable by uid $(id -u)." >&2
+    echo "launch.sh: mount the volume writable by uid 1001, e.g. podman's ':U' flag" >&2
+    echo "launch.sh:   -v electron-profile:$ELECTRON_USER_DATA:U" >&2
+    echo "launch.sh: or chown the host path/volume to 1001 before running." >&2
+    exit 1
+  fi
+fi
+
 if gpu_present; then
   RENDER_FLAGS=(
     --enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiOnNvidiaGPUs,VaapiIgnoreDriverChecks

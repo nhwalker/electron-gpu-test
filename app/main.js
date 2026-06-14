@@ -11,6 +11,36 @@ const { app, BrowserWindow } = require('electron');
 
 const DEFAULT_URL = 'https://webrtc.github.io/samples/';
 
+// --- Persistent web storage ---------------------------------------------------
+// All web storage (cookies, localStorage, IndexedDB, Cache Storage, service
+// workers) lives under Electron's userData directory. The container is
+// ephemeral, so by default that directory -- and every logged-in session -- is
+// thrown away when the container stops. Point userData at a path the operator
+// can mount as a volume (ELECTRON_USER_DATA) to make it survive container
+// recreation. Unset -> the normal default (~/.config/<appName>), unchanged
+// behavior. Must run before app is ready, hence at module load.
+if (process.env.ELECTRON_USER_DATA) {
+  app.setPath('userData', process.env.ELECTRON_USER_DATA);
+}
+
+// Per-URL storage isolation: each window gets its own *persistent* session
+// partition keyed by the page's origin, so different sites can't read each
+// other's cookies/storage and each remembers its own login across restarts.
+// Electron stores a 'persist:'-prefixed partition under userData/Partitions/<name>,
+// so these ride along on the same volume. file:// URLs (no host) share one
+// "local" partition.
+function partitionForUrl(url) {
+  let key = 'local';
+  try {
+    const u = new URL(url);
+    if (u.host) key = `${u.protocol.replace(':', '')}-${u.host}`;
+  } catch (_) {
+    // Not a parseable URL; fall back to the shared "local" partition.
+  }
+  // Keep the partition name to a safe, filesystem-friendly charset.
+  return `persist:${key.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+}
+
 // Pull the URLs out of argv. argv looks like:
 //   [ electronBinary, appPath, '--some-chromium-switch', 'https://...', ... ]
 // so we keep only the bits that parse as http(s)/file URLs.
@@ -25,7 +55,9 @@ function createWindow(url) {
     webPreferences: {
       // This app only displays remote pages; keep node out of the renderer.
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      // Isolate each origin's storage into its own persistent partition.
+      partition: partitionForUrl(url)
     }
   });
 

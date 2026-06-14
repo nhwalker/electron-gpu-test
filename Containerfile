@@ -130,6 +130,18 @@ RUN npm install --omit=optional && \
 
 # Run as non-root where possible.
 RUN useradd -m -u 1001 app && chown -R app:app /app
+
+# --- Persistent web-storage mount point ---------------------------------------
+# Pre-create the conventional ELECTRON_USER_DATA path owned by the app user. A
+# *fresh named volume* mounted here inherits this dir's ownership/permissions
+# (the runtime copies them into the empty volume on first use), so the non-root
+# app (uid 1001) can write to it WITHOUT podman's ':U' flag or a startup chown.
+# This is opt-in: storage only persists here when the operator sets
+# ELECTRON_USER_DATA=/data/profile and mounts a volume there (see README). Note
+# this copy-up applies to named volumes only -- bind mounts keep the host path's
+# ownership, for which the ':U' flag / launch.sh guard still apply.
+RUN install -d -o app -g app -m 0700 /data/profile
+
 USER app
 
 # Launch via the wrapper that carries all the switches. Pass URLs as args:
