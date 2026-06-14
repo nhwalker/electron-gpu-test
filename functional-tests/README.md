@@ -110,11 +110,12 @@ Cross-cutting helpers used by the tests above, written as small reusable modules
 rather than copied into each test:
 
 - **`XvfbContainer`** — a reusable Testcontainers module (`extends GenericContainer<XvfbContainer>`) for the
-  **Xvfb virtual-display sidecar**. It owns the shared `/tmp/.X11-unix` socket volume and the `X-READY` wait.
-  `xvfb.prepareClient(appContainer)` wires an app container to the display (mounts the shared socket volume,
+  **display sidecar**. It owns the shared `/tmp/.X11-unix` socket source and the `X-READY` wait.
+  `xvfb.prepareClient(appContainer)` wires an app container to the display (mounts the shared socket source,
   sets `DISPLAY`, adds the startup dependency). Because the sidecar also bundles ffmpeg, it exposes
   `startRecording()` / `stopRecordingAsWebm()` to screen-record the display on demand (raw capture → WebM),
-  as used by the spin test.
+  as used by the spin test. By default the sidecar starts its **own Xvfb** virtual display on `:99`; set
+  `LOCAL_DISPLAY` (see *Running on the local display* below) to record an existing host display instead.
 - **`TestImages`** — resolves the pre-built image tags the tests run (harness, WebGL harness, spin harness,
   Xvfb sidecar). Each accessor defaults to the tag `containers/build-images.sh` produces, overridable per
   image via an env var (see *Building the images* below), and fails fast with a pointer at the build script
@@ -135,6 +136,23 @@ containers/build-images.sh
 ```
 
 Raw Allure results land in `build/allure-results`.
+
+### Running on the local display
+
+By default the suite spins up an **Xvfb sidecar** that serves a throwaway virtual
+display on `:99`, and ffmpeg records that. To instead run the app on — and record
+— an X display **already running on your host** (so you can watch it live), point
+`LOCAL_DISPLAY` at it:
+
+```sh
+LOCAL_DISPLAY="$DISPLAY" ./gradlew test     # e.g. LOCAL_DISPLAY=:0
+```
+
+When `LOCAL_DISPLAY` is set, the sidecar **bind-mounts the host's real
+`/tmp/.X11-unix`** and uses the named display as-is: it starts **no Xvfb**, and
+`startRecording()` / `stopRecordingAsWebm()` capture that display. The app and
+sidecar containers must be allowed to reach your X server — typically
+`xhost +local:` first. Unset `LOCAL_DISPLAY` to go back to the Xvfb sidecar.
 
 ### Building the images
 
