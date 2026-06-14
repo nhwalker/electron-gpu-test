@@ -56,7 +56,7 @@ podman run --rm --device nvidia.com/gpu=all \
   -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
   -v "$XAUTHORITY":/home/app/.Xauthority:ro -e XAUTHORITY=/home/app/.Xauthority \
   -e ELECTRON_USER_DATA=/data/profile \
-  -v electron-profile:/data/profile:U \
+  -v electron-profile:/data/profile \
   electron-gpu-test https://webrtc.github.io/samples/
 ```
 
@@ -64,12 +64,16 @@ Notes:
 
 - A **named volume** (`electron-profile` above) is kept independently of the
   container and re-attached on the next run, so storage "reloads with the
-  container". A host bind-mount (`-v /host/path:/data/profile:U`) works too if
-  you want the files on the host.
-- The app runs as the non-root `app` user (uid 1001). A fresh named volume is
-  root-owned and unwritable; podman's **`:U`** mount flag chowns it to the
-  container user. Without writable storage `launch.sh` exits with a fix-it
-  message rather than letting Chromium fail obscurely.
+  container". A host bind-mount (`-v /host/path:/data/profile`) works too if you
+  want the files on the host.
+- The app runs as the non-root `app` user (uid 1001). The image pre-creates
+  `/data/profile` owned by 1001, so a **fresh named volume** mounted there
+  inherits that ownership (the runtime copies it into the empty volume on first
+  use) and is writable with no extra flags. This copy-up does **not** apply to
+  **bind mounts** — for those, make the host path writable by 1001 (e.g.
+  `chown 1001 /host/path`, or podman's `:U` mount flag). If storage isn't
+  writable, `launch.sh` exits with a fix-it message rather than letting Chromium
+  fail obscurely.
 - Leaving `ELECTRON_USER_DATA` unset keeps the previous behavior (storage under
   the default `~/.config/electron-gpu-test`, discarded with the container).
 - **Per-origin isolation:** each window opens in its own persistent session
