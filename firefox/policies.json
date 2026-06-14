@@ -1,0 +1,17 @@
+{
+  "policies": {
+    "DisplayBookmarksToolbar": "always",
+
+    "DisablePrivateBrowsing": true,
+
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "DisablePocket": true,
+    "DontCheckDefaultBrowser": true,
+    "DisableAppUpdate": true,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+
+    "Bookmarks": []
+  }
+}

@@ -97,14 +97,27 @@ jobs:
           cache-from: type=gha,scope=xvfb
           cache-to: type=gha,mode=max,scope=xvfb
 
-      # The thin test-harness layers build FROM the daemon-local production tag,
+      # The Firefox image (separate stack from Electron) for the policy test;
+      # its own cache scope. Loaded into the daemon so its harness layer can
+      # build FROM it below.
+      - name: Build Firefox image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile.firefox
+          load: true
+          tags: firefox-ubi9:undertest
+          cache-from: type=gha,scope=firefox
+          cache-to: type=gha,mode=max,scope=firefox
+
+      # The thin test-harness layers build FROM the daemon-local production tags,
       # which buildx's container driver can't see -- so build them with plain
-      # `docker build` via the same script developers use locally. The base and
-      # xvfb targets are skipped here: they were just built (cached) above.
+      # `docker build` via the same script developers use locally. The base, xvfb
+      # and firefox targets are skipped here: they were just built (cached) above.
       - name: Build test harness images
         env:
           CONTAINER_TOOL: docker
-        run: functional-tests/containers/build-images.sh harness webgl-harness spin-harness
+        run: functional-tests/containers/build-images.sh harness webgl-harness spin-harness firefox-harness
 
       # The suite picks the images up by their default tags, which match the
       # tags built above (override via the env vars documented in TestImages).

@@ -13,6 +13,8 @@
 #   harness        base + version-matched ChromeDriver (FROM base)
 #   webgl-harness  harness + vendored offline NASA WorldWind (FROM base)
 #   spin-harness   webgl-harness + the spinning-globe page (FROM webgl-harness)
+#   firefox        Firefox image from the repo's Containerfile.firefox
+#   firefox-harness firefox + version-matched geckodriver (FROM firefox)
 #
 # Tooling: podman or docker, auto-detected (podman preferred, matching the
 # project README); override with CONTAINER_TOOL=docker|podman. Note that the
@@ -21,7 +23,8 @@
 # Image tags default to what the test suite expects (see TestImages.java) and
 # can be overridden with the matching env vars:
 #   ELECTRON_BASE_IMAGE, XVFB_IMAGE, ELECTRON_HARNESS_IMAGE,
-#   WEBGL_HARNESS_IMAGE, WEBGL_SPIN_HARNESS_IMAGE
+#   WEBGL_HARNESS_IMAGE, WEBGL_SPIN_HARNESS_IMAGE,
+#   FIREFOX_BASE_IMAGE, FIREFOX_HARNESS_IMAGE
 #
 # Building `base` runs dnf/npm (downloads Electron); the harness layers download
 # ChromeDriver and WorldWind via npm -- so this needs network access, and takes
@@ -50,8 +53,10 @@ XVFB_IMAGE="${XVFB_IMAGE:-electron-gpu-test:xvfb}"
 HARNESS_IMAGE="${ELECTRON_HARNESS_IMAGE:-electron-gpu-test:harness}"
 WEBGL_HARNESS_IMAGE="${WEBGL_HARNESS_IMAGE:-electron-gpu-test:webgl-harness}"
 WEBGL_SPIN_HARNESS_IMAGE="${WEBGL_SPIN_HARNESS_IMAGE:-electron-gpu-test:webgl-spin-harness}"
+FIREFOX_BASE_IMAGE="${FIREFOX_BASE_IMAGE:-firefox-ubi9:undertest}"
+FIREFOX_HARNESS_IMAGE="${FIREFOX_HARNESS_IMAGE:-firefox-ubi9:harness}"
 
-ALL_TARGETS=(base xvfb harness webgl-harness spin-harness)
+ALL_TARGETS=(base xvfb harness webgl-harness spin-harness firefox firefox-harness)
 TARGETS=("$@")
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
     TARGETS=("${ALL_TARGETS[@]}")
@@ -68,7 +73,7 @@ wants() {
 # Validate target names up front so a typo doesn't silently build nothing.
 for t in "${TARGETS[@]}"; do
     case "${t}" in
-        base|xvfb|harness|webgl-harness|spin-harness) ;;
+        base|xvfb|harness|webgl-harness|spin-harness|firefox|firefox-harness) ;;
         *)
             echo "error: unknown target '${t}' (valid: ${ALL_TARGETS[*]})" >&2
             exit 1
@@ -116,6 +121,18 @@ fi
 if wants spin-harness; then
     build -t "${WEBGL_SPIN_HARNESS_IMAGE}" --build-arg BASE_IMAGE="${WEBGL_HARNESS_IMAGE}" \
         -f "${SCRIPT_DIR}/webgl-spin-harness.Dockerfile" "${SCRIPT_DIR}"
+fi
+
+# The Firefox image (separate from the Electron stack above) and its geckodriver
+# test layer. The Firefox base reuses the same extra-cas/ proxy-CA forwarding.
+if wants firefox; then
+    prepare_extra_cas
+    build -t "${FIREFOX_BASE_IMAGE}" -f "${REPO_ROOT}/Containerfile.firefox" "${REPO_ROOT}"
+fi
+
+if wants firefox-harness; then
+    build -t "${FIREFOX_HARNESS_IMAGE}" --build-arg BASE_IMAGE="${FIREFOX_BASE_IMAGE}" \
+        -f "${SCRIPT_DIR}/firefox-harness.Dockerfile" "${SCRIPT_DIR}"
 fi
 
 echo ">> done: ${TARGETS[*]}"

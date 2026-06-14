@@ -40,24 +40,38 @@ COPY rocky9.repo /etc/yum.repos.d/rocky9.repo
 # openssl        : setup-certs.sh wraps client cert+key into a transient PKCS#12
 #                  (NSS can't import a bare PEM key) before pk12util loads it.
 # liberation/dejavu fonts: default Western fonts so pages render real glyphs.
+# jq             : merges firefox/policies.json + firefox/bookmarks.json into the
+#                  active enterprise policy, at build and at launch (setup-config.sh).
 # install_weak_deps=False keeps the Rocky fallback to just hard deps (no balloon).
 RUN dnf -y install --setopt=install_weak_deps=False \
         firefox \
         nss nss-tools openssl \
+        jq \
         liberation-sans-fonts liberation-serif-fonts liberation-mono-fonts \
         dejavu-sans-fonts && \
     dnf clean all
 
-# --- The cert importer (shared, verbatim) + the Firefox launch wrapper --------
+# --- App scripts + Firefox config ---------------------------------------------
 # setup-certs.sh is copied from app/ UNCHANGED -- it IS the Electron app's cert
 # importer; firefox-launch.sh sources it with TLS_NSSDB pointed at the profile.
+# policies.json (feature lockdowns + toolbar) and bookmarks.json (the easy-to-edit
+# toolbar entries) are the baked config defaults; setup-config.sh merges them.
 WORKDIR /app
 COPY app/setup-certs.sh /app/setup-certs.sh
 COPY firefox/firefox-launch.sh /app/firefox-launch.sh
-RUN chmod +x /app/setup-certs.sh /app/firefox-launch.sh
+COPY firefox/setup-config.sh /app/setup-config.sh
+COPY firefox/policies.json firefox/bookmarks.json /app/firefox/
+RUN chmod +x /app/setup-certs.sh /app/firefox-launch.sh /app/setup-config.sh
 
-# Run as a non-root user with a real, writable home for the profile + NSS DB.
-RUN useradd -m -u 1001 firefox && chown -R firefox:firefox /app
+# Create the non-root user first so we can hand it the policy dirs.
+RUN useradd -m -u 1001 firefox
+
+# Bake the default active policies.json into both locations Firefox reads on
+# Linux, then hand those dirs to the firefox user so a non-root launch can
+# regenerate them when runtime overrides (/config/*) are mounted.
+RUN mkdir -p /etc/firefox/policies && \
+    /app/setup-config.sh && \
+    chown -R firefox:firefox /app /etc/firefox/policies /usr/lib64/firefox/distribution
 USER firefox
 
 # Launch via the wrapper. Pass URLs (and extra Firefox flags) as args:

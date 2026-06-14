@@ -1,0 +1,13 @@
+[
+  {
+    "Title": "Example",
+    "URL": "https://example.com",
+    "Placement": "toolbar"
+  },
+  {
+    "Title": "WebRTC samples",
+    "URL": "https://webrtc.github.io/samples/",
+    "Placement": "toolbar",
+    "Folder": "Reference"
+  }
+]

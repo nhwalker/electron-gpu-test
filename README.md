@@ -100,3 +100,41 @@ The same env knobs apply (`TLS_CERT_DIR`, `TLS_CLIENT_KEY_PASS`). Firefox-specif
 knobs: `FIREFOX_PROFILE` (profile dir, default `~/.mozilla/firefox/container.default`)
 and `FIREFOX_KEEP_SANDBOX=1` (re-enable the content sandbox, which needs a
 container granted unprivileged user namespaces).
+
+### Firefox configuration (bookmarks toolbar & lockdowns)
+
+Firefox config is driven by **enterprise policies** (`policies.json`) — the
+supported way to populate the bookmarks toolbar and lock features. Two small,
+editable files in the repo are the source of truth:
+
+- **`firefox/bookmarks.json`** — the bookmarks toolbar, kept in its own file so
+  editing it never means touching the larger policy JSON. A plain array:
+
+  ```json
+  [
+    { "Title": "Example", "URL": "https://example.com", "Placement": "toolbar" },
+    { "Title": "Docs", "URL": "https://example.com/docs", "Placement": "toolbar", "Folder": "Reference" }
+  ]
+  ```
+  `Placement` is `toolbar` or `menu`; `Folder` (optional) nests the bookmark.
+
+- **`firefox/policies.json`** — feature lockdowns and toolbar visibility. Ships
+  with `DisablePrivateBrowsing`, `DisplayBookmarksToolbar: "always"`, and a few
+  telemetry/update/first-run lockdowns. Add any key from the
+  [Firefox policy templates](https://mozilla.github.io/policy-templates/) here
+  (e.g. `DisableDeveloperTools`, `BlockAboutConfig`, a locked `Homepage`).
+
+At build, `firefox/setup-config.sh` merges these into the active `policies.json`
+(written to both `/etc/firefox/policies/` and the install's `distribution/` dir).
+The merge re-runs at launch, so you can **override at run time with no rebuild**:
+
+```sh
+# Swap just the bookmarks toolbar:
+podman run --rm -v ./my-bookmarks.json:/config/bookmarks.json:ro firefox-ubi9 https://example.com/
+# Or replace the whole policy set:
+podman run --rm -v ./my-policies.json:/config/policies.json:ro firefox-ubi9 https://example.com/
+```
+
+Env knobs: `FIREFOX_BOOKMARKS` (default `/config/bookmarks.json`) and
+`FIREFOX_POLICIES` (default `/config/policies.json`). Verify what Firefox is
+actually enforcing by opening `about:policies#active` in the browser.

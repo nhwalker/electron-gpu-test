@@ -37,23 +37,19 @@ fi
 PROFILE_DIR="${FIREFOX_PROFILE:-$HOME/.mozilla/firefox/container.default}"
 mkdir -p "$PROFILE_DIR"
 
-# Make Firefox pick the single matching client cert automatically instead of
-# popping a blocking chooser dialog -- the same "offer the one identity we have"
-# behaviour main.js implements for Electron. Also quiet the first-run noise so a
-# plain `podman run` goes straight to the target page. Written every launch so
+# Profile-local prefs that enterprise policies can't express: the cert
+# auto-select isn't in the Preferences-policy allowlist, and the onboarding
+# toggles have no dedicated policy key. Everything that IS a lockable feature
+# (telemetry, updates, default-browser check, first-run pages) now lives in
+# firefox/policies.json instead -- see setup-config.sh. Written every launch so
 # the prefs can't drift; user.js wins over prefs.js on each start.
 cat > "$PROFILE_DIR/user.js" <<'EOF'
-// Auto-select the client certificate for mutual TLS (no blocking dialog).
+// Auto-select the single client certificate for mutual TLS (no blocking dialog) --
+// the same "offer the one identity we have" behaviour main.js gives Electron.
 user_pref("security.default_personal_cert", "Select Automatically");
-// Container-friendly first run: skip onboarding, updates, and default-browser nags.
-user_pref("browser.startup.homepage_override.mstone", "ignore");
-user_pref("startup.homepage_welcome_url", "");
-user_pref("startup.homepage_welcome_url.additional", "");
+// Quiet the onboarding/whatsnew UI in a container (no dedicated policy key).
 user_pref("browser.aboutwelcome.enabled", false);
-user_pref("app.update.enabled", false);
-user_pref("browser.shell.checkDefaultBrowser", false);
-user_pref("datareporting.policy.dataSubmissionEnabled", false);
-user_pref("toolkit.telemetry.enabled", false);
+user_pref("browser.startup.homepage_override.mstone", "ignore");
 EOF
 
 # --- Runtime TLS: import mounted certs into the profile's NSS DB --------------
@@ -62,6 +58,16 @@ EOF
 # which the exec'd Firefox must inherit. TLS_NSSDB selects the profile DB.
 export TLS_NSSDB="$PROFILE_DIR"
 source "$(dirname "${BASH_SOURCE[0]}")/setup-certs.sh"
+
+# --- Firefox enterprise policies (bookmarks toolbar + feature lockdowns) -------
+# Regenerate the active policies.json from the baked defaults, applying any
+# runtime-mounted overrides (/config/policies.json, /config/bookmarks.json) so
+# config can change with no image rebuild. Bookmarks live in their own file
+# (bookmarks.json) so the toolbar is easy to customise. Beyond the baked-in
+# defaults this is a no-op when nothing is mounted. Run (not sourced): it writes
+# policy files and needs nothing back in this shell. See firefox/setup-config.sh.
+"$(dirname "${BASH_SOURCE[0]}")/setup-config.sh" \
+  || echo "firefox-config: WARNING policy merge failed; using baked policies" >&2
 
 # --- Content sandbox ----------------------------------------------------------
 # Firefox's content sandbox needs unprivileged user namespaces, which a default
