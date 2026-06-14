@@ -15,22 +15,21 @@
 ARG BASE_IMAGE=browser-base:undertest
 FROM ${BASE_IMAGE}
 
-# --- Chromium 146 runtime shared libraries (REQUIRED) -------------------------
-# The libs a prebuilt Electron binary hard-loads that the shared base does NOT
-# already provide (the GPU/mesa/libva libs and the NSS libs come from the base).
-# A miss here should fail the build. install_weak_deps=False keeps the Rocky
-# fallback repo to just these packages' hard deps (no pipewire/flatpak balloon).
-# libxkbcommon-x11 and libnotify come from the Rocky fallback (UBI omits them).
+# --- Chromium-only runtime shared libraries (REQUIRED) ------------------------
+# Just the libs a prebuilt Electron binary hard-loads that the shared base does
+# NOT already provide. The whole GTK/X GUI toolkit (gtk3, atk, at-spi2, cairo,
+# pango, gdk-pixbuf2, the libX*/libxkbcommon/libwayland stack, alsa-lib, cups-libs,
+# ...), the GPU/mesa/libva libs and the NSS libs all come from the base, so a
+# no-cache RPM diff confirmed only these three are Electron-unique:
+#   libXScrnSaver    - the X screensaver lib Chromium uses to inhibit blanking
+#   libxkbcommon-x11 - X11 keyboard mapping for the X11 Ozone path (from Rocky)
+#   libnotify        - the HTML5 Notifications API (from Rocky)
+# A miss here should fail the build. install_weak_deps=False so Rocky stays a
+# last resort.
 RUN dnf -y install --setopt=install_weak_deps=False \
-        atk at-spi2-atk at-spi2-core \
-        cups-libs \
-        libxkbcommon libxkbcommon-x11 \
-        libX11 libXcomposite libXdamage libXext libXfixes libXrandr \
-        libXScrnSaver libXtst libxcb libxshmfence libXi libXcursor libXrender \
-        libwayland-client libwayland-egl libwayland-cursor \
-        alsa-lib pango cairo cairo-gobject gtk3 expat \
-        libuuid libnotify \
-        dbus-libs && \
+        libXScrnSaver \
+        libxkbcommon-x11 \
+        libnotify && \
     dnf clean all
 
 # --- Node.js (build-time only): used to npm-install the Electron app below.

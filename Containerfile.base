@@ -6,11 +6,13 @@
 # GPU stack + the NSS cert toolchain + default fonts + the NVIDIA runtime env.
 #
 # Engine-specific bits live in the child images that FROM this:
-#   - Containerfile          : Chromium hard-load libs + Node + the Electron app
+#   - Containerfile          : Chromium-only libs + Node + the Electron app
 #   - Containerfile.firefox  : the firefox package + jq + codecs + policy config
-# Firefox pulls its GTK/X GUI libs transitively from the firefox RPM, so they are
-# intentionally NOT hoisted here (that would only bloat the Firefox image with
-# Chromium-only libs). The base stays the lean common denominator.
+# The shared GTK/X GUI toolkit IS hoisted here: a no-cache build measured ~106 MB
+# of identical RPMs landing in BOTH child layers (Electron enumerates them; Firefox
+# pulls them transitively), so installing them once in the base dedups that. Only
+# genuinely engine-specific GUI libs stay in the children (e.g. libXScrnSaver,
+# libnotify, libxkbcommon-x11 for Electron; the firefox RPM's own extras).
 #
 # GPU: the NVIDIA proprietary userspace is NOT baked in; it is injected at RUN
 # TIME by the NVIDIA Container Toolkit (CDI). This image carries only the
@@ -62,6 +64,20 @@ RUN dnf -y install --setopt=install_weak_deps=False \
         libva libva-utils \
         libva-nvidia-driver \
         liberation-sans-fonts liberation-serif-fonts liberation-mono-fonts && \
+    dnf clean all
+
+# --- Shared GTK/X GUI toolkit (needed by BOTH engines) ------------------------
+# The ~106 MB both child images otherwise install twice. These roots transitively
+# pull the rest of the shared set (atk, at-spi2-*, cairo-gobject, gdk-pixbuf2,
+# the adwaita themes, libX{composite,damage,randr,cursor,i,inerama}, libxkbcommon,
+# xkeyboard-config, shared-mime-info, gsettings-desktop-schemas, cups-libs,
+# colord-libs, lcms2, libtiff/webp, libtracker-sparql, ...). libicu, libsoup,
+# glib-networking and libXtst aren't pulled by gtk3, so they're named explicitly.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        gtk3 \
+        libicu \
+        libsoup glib-networking \
+        libXtst && \
     dnf clean all
 
 # --- NVIDIA Container Toolkit runtime injection -------------------------------
