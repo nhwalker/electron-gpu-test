@@ -8,7 +8,8 @@
 #   functional-tests/containers/build-images.sh harness    # build a subset
 #
 # Targets (default: all), in dependency order:
-#   base           production image from the repo's Containerfile
+#   platform       shared base image (Containerfile.base) both browsers build FROM
+#   base           Electron production image (Containerfile, FROM platform)
 #   xvfb           Xvfb + ffmpeg display/recording sidecar
 #   harness        base + version-matched ChromeDriver (FROM base)
 #   webgl-harness  harness + vendored offline NASA WorldWind (FROM base)
@@ -24,7 +25,7 @@
 # can be overridden with the matching env vars:
 #   ELECTRON_BASE_IMAGE, XVFB_IMAGE, ELECTRON_HARNESS_IMAGE,
 #   WEBGL_HARNESS_IMAGE, WEBGL_SPIN_HARNESS_IMAGE,
-#   FIREFOX_BASE_IMAGE, FIREFOX_HARNESS_IMAGE
+#   PLATFORM_IMAGE, FIREFOX_BASE_IMAGE, FIREFOX_HARNESS_IMAGE
 #
 # Building `base` runs dnf/npm (downloads Electron); the harness layers download
 # ChromeDriver and WorldWind via npm -- so this needs network access, and takes
@@ -55,8 +56,11 @@ WEBGL_HARNESS_IMAGE="${WEBGL_HARNESS_IMAGE:-electron-gpu-test:webgl-harness}"
 WEBGL_SPIN_HARNESS_IMAGE="${WEBGL_SPIN_HARNESS_IMAGE:-electron-gpu-test:webgl-spin-harness}"
 FIREFOX_BASE_IMAGE="${FIREFOX_BASE_IMAGE:-firefox-ubi9:undertest}"
 FIREFOX_HARNESS_IMAGE="${FIREFOX_HARNESS_IMAGE:-firefox-ubi9:harness}"
+# The shared platform base both the Electron (base) and firefox images build FROM.
+PLATFORM_IMAGE="${PLATFORM_IMAGE:-browser-base:undertest}"
 
-ALL_TARGETS=(base xvfb harness webgl-harness spin-harness firefox firefox-harness)
+# platform is built first; base (Electron app) and firefox build FROM it.
+ALL_TARGETS=(platform base xvfb harness webgl-harness spin-harness firefox firefox-harness)
 TARGETS=("$@")
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
     TARGETS=("${ALL_TARGETS[@]}")
@@ -73,7 +77,7 @@ wants() {
 # Validate target names up front so a typo doesn't silently build nothing.
 for t in "${TARGETS[@]}"; do
     case "${t}" in
-        base|xvfb|harness|webgl-harness|spin-harness|firefox|firefox-harness) ;;
+        platform|base|xvfb|harness|webgl-harness|spin-harness|firefox|firefox-harness) ;;
         *)
             echo "error: unknown target '${t}' (valid: ${ALL_TARGETS[*]})" >&2
             exit 1
@@ -99,9 +103,16 @@ build() {
     "${TOOL}" build "$@"
 }
 
-if wants base; then
+# The shared platform base both browser images build FROM. It runs the dnf/CA
+# work, so the proxy-CA forwarding lives here now (the children inherit the trust).
+if wants platform; then
     prepare_extra_cas
-    build -t "${BASE_IMAGE}" -f "${REPO_ROOT}/Containerfile" "${REPO_ROOT}"
+    build -t "${PLATFORM_IMAGE}" -f "${REPO_ROOT}/Containerfile.base" "${REPO_ROOT}"
+fi
+
+if wants base; then
+    build -t "${BASE_IMAGE}" --build-arg BASE_IMAGE="${PLATFORM_IMAGE}" \
+        -f "${REPO_ROOT}/Containerfile" "${REPO_ROOT}"
 fi
 
 if wants xvfb; then
@@ -123,16 +134,15 @@ if wants spin-harness; then
         -f "${SCRIPT_DIR}/webgl-spin-harness.Dockerfile" "${SCRIPT_DIR}"
 fi
 
-# The Firefox image (separate from the Electron stack above) and its geckodriver
-# test layer. The Firefox base reuses the same extra-cas/ proxy-CA forwarding.
+# The Firefox image builds FROM the shared platform base, like the Electron one.
 if wants firefox; then
-    prepare_extra_cas
     # FIREFOX_FFMPEG_PACKAGES=ffmpeg selects full H.264/HEVC hardware decode where
     # RPM Fusion resolves; the default (libavcodec-free) covers the WebRTC codecs.
     FFMPEG_ARGS=()
     [[ -n "${FIREFOX_FFMPEG_PACKAGES:-}" ]] && \
         FFMPEG_ARGS=(--build-arg "FFMPEG_PACKAGES=${FIREFOX_FFMPEG_PACKAGES}")
-    build -t "${FIREFOX_BASE_IMAGE}" "${FFMPEG_ARGS[@]}" \
+    build -t "${FIREFOX_BASE_IMAGE}" --build-arg BASE_IMAGE="${PLATFORM_IMAGE}" \
+        "${FFMPEG_ARGS[@]}" \
         -f "${REPO_ROOT}/Containerfile.firefox" "${REPO_ROOT}"
 fi
 

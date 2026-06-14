@@ -74,19 +74,21 @@ jobs:
       # ALL images the suite runs are built up front -- the test JVM never builds
       # images, it only consumes the tags produced here (see TestImages.java).
       #
-      # The expensive production image is built with buildx + the GHA layer cache
-      # and loaded into the runner's Docker daemon.
-      - name: Build production image
+      # The shared platform base (Containerfile.base) carries the expensive common
+      # layers (UBI9 + repos + GPU/VAAPI stack + NSS certs). Build it with buildx +
+      # the GHA layer cache and load it into the runner's daemon; the Electron and
+      # Firefox images then build FROM it.
+      - name: Build shared platform base
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Containerfile
+          file: Containerfile.base
           load: true
-          tags: electron-gpu-test:undertest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: browser-base:undertest
+          cache-from: type=gha,scope=platform
+          cache-to: type=gha,mode=max,scope=platform
 
-      # Same treatment for the Xvfb sidecar image (separate cache scope).
+      # The Xvfb sidecar is independent of the base (separate cache scope).
       - name: Build Xvfb sidecar image
         uses: docker/build-push-action@v6
         with:
@@ -97,27 +99,15 @@ jobs:
           cache-from: type=gha,scope=xvfb
           cache-to: type=gha,mode=max,scope=xvfb
 
-      # The Firefox image (separate stack from Electron) for the policy test;
-      # its own cache scope. Loaded into the daemon so its harness layer can
-      # build FROM it below.
-      - name: Build Firefox image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Containerfile.firefox
-          load: true
-          tags: firefox-ubi9:undertest
-          cache-from: type=gha,scope=firefox
-          cache-to: type=gha,mode=max,scope=firefox
-
-      # The thin test-harness layers build FROM the daemon-local production tags,
-      # which buildx's container driver can't see -- so build them with plain
-      # `docker build` via the same script developers use locally. The base, xvfb
-      # and firefox targets are skipped here: they were just built (cached) above.
-      - name: Build test harness images
+      # The Electron (base), Firefox and harness images all build FROM daemon-local
+      # tags (the platform base + each other), which buildx's container driver
+      # can't see -- so build them with plain `docker build` via the same script
+      # developers use locally. The `platform` and `xvfb` targets are skipped here:
+      # they were just built (and GHA-cached) above.
+      - name: Build app + harness images
         env:
           CONTAINER_TOOL: docker
-        run: functional-tests/containers/build-images.sh harness webgl-harness spin-harness firefox-harness
+        run: functional-tests/containers/build-images.sh base firefox harness webgl-harness spin-harness firefox-harness
 
       # The suite picks the images up by their default tags, which match the
       # tags built above (override via the env vars documented in TestImages).

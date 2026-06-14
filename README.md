@@ -14,7 +14,9 @@ steps.
   - `package.json` — pins `electron@41.1.1`
   - `launch.sh` — the launch wrapper with all the GPU/Ozone switches
   - `setup-certs.sh` — imports runtime-mounted TLS certs into the NSS DB (sourced by `launch.sh`)
-- `Containerfile` — builds the image
+- `Containerfile.base` — shared platform base (UBI9 + repos + GPU/VAAPI stack + NSS cert toolchain + fonts) that both browser images build `FROM`
+- `Containerfile` — Electron image, `FROM` the base
+- `Containerfile.firefox` — Firefox image, `FROM` the base
 
 ## The app
 

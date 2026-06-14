@@ -1,0 +1,71 @@
+# =============================================================================
+# Shared platform base for the UBI9 browser images (Electron and Firefox).
+#
+# Holds ONLY what both engines need, so it's defined once: UBI9 + build-time
+# proxy-CA trust + the EPEL/RPM Fusion/CRB + Rocky repos + the NVIDIA VAAPI->NVDEC
+# GPU stack + the NSS cert toolchain + default fonts + the NVIDIA runtime env.
+#
+# Engine-specific bits live in the child images that FROM this:
+#   - Containerfile          : Chromium hard-load libs + Node + the Electron app
+#   - Containerfile.firefox  : the firefox package + jq + codecs + policy config
+# Firefox pulls its GTK/X GUI libs transitively from the firefox RPM, so they are
+# intentionally NOT hoisted here (that would only bloat the Firefox image with
+# Chromium-only libs). The base stays the lean common denominator.
+#
+# GPU: the NVIDIA proprietary userspace is NOT baked in; it is injected at RUN
+# TIME by the NVIDIA Container Toolkit (CDI). This image carries only the
+# VAAPI->NVDEC bridge (libva-nvidia-driver). See plan.md for the source-build
+# fallback and the "verify against live RHEL/RPM Fusion repos" caveats.
+#
+# Build (context = repo root):  podman build -t browser-base -f Containerfile.base .
+# =============================================================================
+
+FROM registry.access.redhat.com/ubi9/ubi:latest
+
+# --- Optional: trust extra CA certificates before any TLS download ------------
+# Build environments behind a TLS-intercepting proxy present a private CA that
+# dnf/curl won't trust, breaking every https repo fetch. Drop PEMs into the build
+# context's extra-cas/ to trust them here. Usually a placeholder -> a no-op with
+# direct egress. BUILD-time trust only; runtime cert trust is the /certs mount.
+COPY extra-cas/ /etc/pki/ca-trust/source/anchors/
+RUN update-ca-trust extract || true
+
+# --- Rocky Linux 9 LAST-RESORT fallback repo (priority=200; see rocky9.repo) ---
+# Supplies the handful of libs UBI omits (fonts, a couple of X libs). The low
+# priority means dnf only pulls from Rocky what nothing else provides.
+COPY rocky9.repo /etc/yum.repos.d/rocky9.repo
+
+# --- Repos: EPEL9 + RPM Fusion (free AND nonfree) + CRB ------------------------
+# RPM Fusion carries the VAAPI->NVDEC bridge (and, for Firefox, full ffmpeg). CRB
+# backs some X libs; its repo id differs by distro, so try all known ids. We never
+# install Cisco's openh264; disabling its repo avoids a known-flaky build dep.
+# VERIFY these release-RPM URLs on your host.
+RUN dnf -y install \
+        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+        https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-9.noarch.rpm \
+        https://mirrors.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-9.noarch.rpm && { \
+        dnf config-manager --set-enabled \
+            crb ubi-9-codeready-builder-rpms \
+            "codeready-builder-for-rhel-9-$(uname -m)-rpms" || true; \
+        dnf config-manager --set-disabled epel-cisco-openh264 || true; \
+    }
+
+# --- The shared platform packages ---------------------------------------------
+# GPU/VAAPI stack (the NVIDIA VAAPI->NVDEC bridge + the GL/EGL/DRI drivers both
+# engines render through, and the llvmpipe software path), the NSS cert toolchain
+# that setup-certs.sh drives (nss-tools/openssl) plus the NSS libs themselves, and
+# the default Western fonts. install_weak_deps=False keeps Rocky a true last resort
+# and stops libva-nvidia-driver dragging in the full RPM Fusion driver stack.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        nss nspr nss-tools openssl \
+        libdrm mesa-libgbm mesa-libGL mesa-libEGL mesa-dri-drivers \
+        libva libva-utils \
+        libva-nvidia-driver \
+        liberation-sans-fonts liberation-serif-fonts liberation-mono-fonts && \
+    dnf clean all
+
+# --- NVIDIA Container Toolkit runtime injection -------------------------------
+# Let the toolkit see what it needs at runtime. The VAAPI backend selection
+# (LIBVA_DRIVER_NAME/NVD_BACKEND) is engine-specific and set by the child images.
+ENV NVIDIA_DRIVER_CAPABILITIES=all
+ENV NVIDIA_VISIBLE_DEVICES=all

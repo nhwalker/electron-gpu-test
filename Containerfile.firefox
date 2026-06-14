@@ -1,110 +1,53 @@
 # =============================================================================
-# Firefox (ESR) on UBI9, with NVIDIA hardware video decode (incl. WebRTC).
+# Firefox (ESR) on the shared browser base, with NVIDIA hardware video decode
+# (incl. WebRTC).
 #
-# A sibling to the Electron image (./Containerfile). It runs Firefox instead of
-# Electron, but loads runtime-mounted TLS certs the SAME way the Electron app
-# does: by sourcing the exact same app/setup-certs.sh, which imports a mounted
-# directory of PEM files into an NSS DB (standalone certs as trusted CAs, cert+key
-# pairs as client identities for mutual TLS). The only difference is the target
-# DB -- Firefox reads cert9.db/key4.db from its profile, so firefox-launch.sh
-# points the shared importer there via TLS_NSSDB. See app/setup-certs.sh.
+# The GPU/VAAPI stack (incl. the NVIDIA VAAPI->NVDEC bridge), EPEL/RPM Fusion/CRB
+# + Rocky repos, build-time CA trust, the NSS cert toolchain and the default fonts
+# all come from Containerfile.base. This image adds only the firefox package, jq,
+# the codec library, and the policy/config tooling. See Containerfile.base.
 #
-# GPU: like the Electron image, the NVIDIA proprietary userspace is NOT baked in;
-# it is injected at RUN TIME by the NVIDIA Container Toolkit via CDI. The image
-# carries the VAAPI->NVDEC bridge (libva-nvidia-driver) + ffmpeg so Firefox can
-# do hardware video decode (including WebRTC) when a GPU is present; with no GPU,
-# firefox-launch.sh falls back to software rendering. See the same caveats in
-# plan.md about verifying libva-nvidia-driver against live RHEL/RPM Fusion repos.
+# Certs load the SAME way the Electron app does: firefox-launch.sh sources the
+# exact same app/setup-certs.sh, importing a mounted dir of PEMs into an NSS DB
+# (CAs trusted, cert+key pairs as client identities). The only difference is the
+# target DB -- Firefox reads cert9.db/key4.db from its profile, so the launcher
+# points the importer there via TLS_NSSDB. See app/setup-certs.sh.
 #
 # Build (context = repo root, so app/setup-certs.sh is reachable):
 #   podman build -t firefox-ubi9 -f Containerfile.firefox .
-#
 # Run, mounting a directory of certs to trust / present (default scan dir /certs):
 #   podman run --rm -v /path/to/certs:/certs:ro firefox-ubi9 https://internal.example.test/
 # =============================================================================
 
-FROM registry.access.redhat.com/ubi9/ubi:latest
+ARG BASE_IMAGE=browser-base:undertest
+FROM ${BASE_IMAGE}
 
-# --- Optional: trust extra CA certificates before any TLS download ------------
-# Same build-time proxy-CA escape hatch as the Electron image: drop PEMs into
-# the build context's extra-cas/ to trust a TLS-intercepting egress proxy so the
-# dnf fetches below succeed. Usually just a placeholder, so a no-op with direct
-# egress. This is BUILD-time trust only; runtime cert trust is the /certs mount.
-COPY extra-cas/ /etc/pki/ca-trust/source/anchors/
-RUN update-ca-trust extract || true
-
-# --- Rocky Linux 9 as a LAST-RESORT fallback repo (priority=200; see rocky9.repo)
-# UBI's public repos ship Firefox itself, but the firefox RPM pulls a long tail
-# of GTK/X/font dependencies and a few of those are not in UBI's subset. The low
-# priority means dnf only pulls from Rocky what nothing else provides, so UBI base
-# packages are never shadowed. ---
-COPY rocky9.repo /etc/yum.repos.d/rocky9.repo
-
-# --- Repos for the GPU stack: EPEL9 + RPM Fusion (free AND nonfree) + CRB ------
-# Same set the Electron image enables: the VAAPI->NVDEC bridge lives in RPM
-# Fusion, ffmpeg's full codecs come from there too, and CRB/EPEL back libva-utils.
-# CRB id differs by distro; try all known ids and ignore misses. We never use
-# Cisco's openh264, so disable its flaky repo. VERIFY these URLs on your host.
-RUN dnf -y install \
-        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
-        https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-9.noarch.rpm \
-        https://mirrors.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-9.noarch.rpm && { \
-        dnf config-manager --set-enabled \
-            crb ubi-9-codeready-builder-rpms \
-            "codeready-builder-for-rhel-9-$(uname -m)-rpms" || true; \
-        dnf config-manager --set-disabled epel-cisco-openh264 || true; \
-    }
-
-# --- Firefox + the cert-import toolchain --------------------------------------
-# firefox        : the browser (RHEL/UBI ships the ESR build in AppStream).
-# nss-tools      : certutil/pk12util -- the same tools setup-certs.sh drives to
-#                  import CAs and client identities into the NSS DB.
-# openssl        : setup-certs.sh wraps client cert+key into a transient PKCS#12
-#                  (NSS can't import a bare PEM key) before pk12util loads it.
-# liberation/dejavu fonts: default Western fonts so pages render real glyphs.
-# jq             : merges firefox/policies.json + firefox/bookmarks.json into the
-#                  active enterprise policy, at build and at launch (setup-config.sh).
-# install_weak_deps=False keeps the Rocky fallback to just hard deps (no balloon).
+# --- Firefox + tooling --------------------------------------------------------
+# firefox : the browser (RHEL/UBI ships the ESR build; its GTK/X GUI libs come in
+#           transitively as RPM deps -- they're not in the shared base).
+# jq      : merges firefox/policies.json + firefox/bookmarks.json into the active
+#           enterprise policy, at build and at launch (setup-config.sh).
+# dejavu-sans-fonts : extra glyph coverage on top of the base's liberation fonts.
+# (nss/nss-tools/openssl that setup-certs.sh needs are provided by the base.)
 RUN dnf -y install --setopt=install_weak_deps=False \
         firefox \
-        nss nss-tools openssl \
         jq \
-        liberation-sans-fonts liberation-serif-fonts liberation-mono-fonts \
         dejavu-sans-fonts && \
     dnf clean all
 
-# --- GPU acceleration + hardware video decode (incl. WebRTC) ------------------
-# Firefox does GPU compositing (WebRender) over GL/EGL and hardware video decode
-# through VAAPI; on NVIDIA, the libva-nvidia-driver bridge maps VAAPI onto NVDEC.
-#   libva, libva-utils        : VAAPI runtime + `vainfo` for diagnostics
-#   mesa-* , libdrm           : GL/EGL + DRI drivers (non-NVIDIA GPUs AND the
-#                               llvmpipe software path used when no GPU is present)
-#   libva-nvidia-driver       : the VAAPI->NVDEC bridge (RPM Fusion)
-#   ${FFMPEG_PACKAGES}        : the system libavcodec Firefox's VAAPI decoder loads.
-# The codec package is a build-arg so you choose the codec set:
-#   libavcodec-free (DEFAULT) : royalty-free codecs (VP8/VP9/AV1) -- exactly what
-#                               WebRTC uses -- with no extra deps. Builds anywhere.
+# --- Hardware video codec for VAAPI decode (incl. WebRTC) ---------------------
+# The GPU/VAAPI stack + NVIDIA bridge are in the base; this adds the system
+# libavcodec Firefox's VAAPI decoder loads. The codec package is a build-arg:
+#   libavcodec-free (DEFAULT) : royalty-free codecs (VP8/VP9/AV1) -- what WebRTC
+#                               uses -- no extra deps; builds anywhere.
 #   ffmpeg                    : full codecs incl. H.264/HEVC hardware decode (RPM
 #                               Fusion). Use where RPM Fusion + its deps (ladspa,
-#                               pulled via rubberband) resolve on your build host:
+#                               via rubberband) resolve on your build host:
 #                                 podman build --build-arg FFMPEG_PACKAGES=ffmpeg ...
-# install_weak_deps=False keeps libva-nvidia-driver from dragging in the full RPM
-# Fusion driver stack (kmod-nvidia/xorg-x11-drv-nvidia*), which conflicts with the
-# runtime-CDI model. If a HARD dep still pulls those, use plan.md's source build.
 ARG FFMPEG_PACKAGES=libavcodec-free
 RUN dnf -y install --setopt=install_weak_deps=False \
-        libva libva-utils \
-        libdrm mesa-libgbm mesa-libGL mesa-libEGL mesa-dri-drivers \
-        libva-nvidia-driver \
         ${FFMPEG_PACKAGES} && \
     dnf clean all
-
-# Let the NVIDIA Container Toolkit inject the driver userspace at runtime. The
-# VAAPI backend selection (LIBVA_DRIVER_NAME/NVD_BACKEND) and the Firefox
-# hardware-decode env/prefs are set per-launch by firefox-launch.sh, which also
-# falls back to software when no GPU is mounted -- so these are safe defaults.
-ENV NVIDIA_DRIVER_CAPABILITIES=all
-ENV NVIDIA_VISIBLE_DEVICES=all
 
 # --- App scripts + Firefox config ---------------------------------------------
 # setup-certs.sh is copied from app/ UNCHANGED -- it IS the Electron app's cert
