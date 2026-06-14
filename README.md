@@ -118,11 +118,33 @@ editable files in the repo are the source of truth:
   ```
   `Placement` is `toolbar` or `menu`; `Folder` (optional) nests the bookmark.
 
-- **`firefox/policies.json`** — feature lockdowns and toolbar visibility. Ships
-  with `DisablePrivateBrowsing`, `DisplayBookmarksToolbar: "always"`, and a few
-  telemetry/update/first-run lockdowns. Add any key from the
-  [Firefox policy templates](https://mozilla.github.io/policy-templates/) here
-  (e.g. `DisableDeveloperTools`, `BlockAboutConfig`, a locked `Homepage`).
+- **`firefox/policies.json`** — feature lockdowns and toolbar visibility. The
+  default is a **kiosk-like security posture** (see below). Add or change any key
+  from the [Firefox policy templates](https://mozilla.github.io/policy-templates/)
+  here, or replace the whole set at run time (`/config/policies.json`).
+
+#### Default kiosk-like posture
+
+When you don't supply your own `policies.json`, the image ships a locked-down
+default suited to an unattended kiosk-style display — a **full browser** (normal
+chrome and UI, *not* Firefox's `--kiosk` single-window mode), hardened so a
+passer-by can't reconfigure or pivot out of it:
+
+- **No private/anonymous surfaces:** `DisablePrivateBrowsing`, `DisableForgetButton`.
+- **No config/diagnostic pivots:** `DisableDeveloperTools`, `BlockAboutConfig`,
+  `BlockAboutProfiles`, `BlockAboutSupport`, `DisableSafeMode`,
+  `DisableProfileImport`/`DisableProfileRefresh`, `DisableSetDesktopBackground`.
+- **No accounts / saved secrets** (shared device): `DisableFirefoxAccounts`,
+  `PasswordManagerEnabled: false`, `OfferToSaveLogins: false`,
+  `DisableMasterPasswordCreation`, `DisablePasswordReveal`, `DisableFormHistory`.
+- **No add-on installs:** `ExtensionSettings` blocks `*`.
+- **Quiet & controlled:** `DisableTelemetry`, `DisableFirefoxStudies`,
+  `DisablePocket`, `DisableAppUpdate`/`DisableSystemAddonUpdate`,
+  `DontCheckDefaultBrowser`, a stripped `FirefoxHome`, suppressed `UserMessaging`,
+  and `NoDefaultBookmarks` (the toolbar shows only your managed bookmarks).
+
+Loosen any of these by editing `firefox/policies.json` (rebuild) or mounting a
+replacement at `/config/policies.json` (no rebuild).
 
 At build, `firefox/setup-config.sh` merges these into the active `policies.json`
 (written to both `/etc/firefox/policies/` and the install's `distribution/` dir).
