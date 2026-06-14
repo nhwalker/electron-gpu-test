@@ -190,15 +190,28 @@ WebRTC and WebGL are pinned on (`media.peerconnection.enabled`, `webgl.force-ena
 so the locked-down profile can't end up with them disabled.
 
 **Verify** on a GPU host: open `about:support` and check *Compositing = WebRender*
-and the *Media* section lists a VAAPI/“HW decoding” entry; run `vainfo` in the
-container; or set `MOZ_LOG=PlatformDecoderModule:5` and look for the VA-API
-decoder being created while playing video.
+and the *Codec Support Information* table shows *Hardware Decoding = Yes*; run
+`vainfo` in the container; or set `MOZ_LOG=PlatformDecoderModule:5` and look for
+the VA-API decoder being created while playing video. (The kiosk-default policy
+blocks `about:support`; lift `BlockAboutSupport` to read it.)
+
+`FirefoxGpuFunctionalTest` automates this: it reads `about:support` through the
+harness and always asserts WebRender compositing + that Firefox accepted the
+VAAPI pref. Set `FIREFOX_GPU_TEST=1` on a GPU host (with the harness container
+given GPU access) to also assert a codec decodes in hardware; otherwise that
+part is skipped so CI stays green.
 
 Caveats:
 
 - **H.264/HEVC hardware decode** needs the full `ffmpeg` (patent codecs). The image
   ships the lean `libavcodec-free`, which covers the royalty-free WebRTC codecs
-  (VP8/VP9/AV1). Swap in `ffmpeg` from RPM Fusion where it resolves on your host.
+  (VP8/VP9/AV1). Build with the full codec set via the `FFMPEG_PACKAGES` build-arg
+  where RPM Fusion (and its `ladspa` dep) resolve on your host:
+
+  ```sh
+  podman build --build-arg FFMPEG_PACKAGES=ffmpeg -t firefox-ubi9 -f Containerfile.firefox .
+  # or, via the build script: FIREFOX_FFMPEG_PACKAGES=ffmpeg functional-tests/containers/build-images.sh firefox
+  ```
 - **WebGL** needs the GPU path (or at least a display + GL driver). Headless with
   no GPU, Firefox has no software-WebGL fallback (unlike Chromium's SwiftShader),
   so WebGL is unavailable there — the no-GPU mode targets page/video/WebRTC.

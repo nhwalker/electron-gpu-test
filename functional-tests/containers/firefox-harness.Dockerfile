@@ -28,7 +28,10 @@ RUN dnf -y install --setopt=install_weak_deps=False tar gzip && dnf clean all &&
 
 COPY firefox-harness-entrypoint.sh /usr/local/bin/firefox-harness-entrypoint.sh
 COPY firefox-policy-check.sh /usr/local/bin/firefox-policy-check.sh
-RUN chmod +x /usr/local/bin/firefox-harness-entrypoint.sh /usr/local/bin/firefox-policy-check.sh
+COPY firefox-support-check.sh /usr/local/bin/firefox-support-check.sh
+RUN chmod +x /usr/local/bin/firefox-harness-entrypoint.sh \
+             /usr/local/bin/firefox-policy-check.sh \
+             /usr/local/bin/firefox-support-check.sh
 
 EXPOSE 4444
 USER firefox

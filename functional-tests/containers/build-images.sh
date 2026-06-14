@@ -127,7 +127,13 @@ fi
 # test layer. The Firefox base reuses the same extra-cas/ proxy-CA forwarding.
 if wants firefox; then
     prepare_extra_cas
-    build -t "${FIREFOX_BASE_IMAGE}" -f "${REPO_ROOT}/Containerfile.firefox" "${REPO_ROOT}"
+    # FIREFOX_FFMPEG_PACKAGES=ffmpeg selects full H.264/HEVC hardware decode where
+    # RPM Fusion resolves; the default (libavcodec-free) covers the WebRTC codecs.
+    FFMPEG_ARGS=()
+    [[ -n "${FIREFOX_FFMPEG_PACKAGES:-}" ]] && \
+        FFMPEG_ARGS=(--build-arg "FFMPEG_PACKAGES=${FIREFOX_FFMPEG_PACKAGES}")
+    build -t "${FIREFOX_BASE_IMAGE}" "${FFMPEG_ARGS[@]}" \
+        -f "${REPO_ROOT}/Containerfile.firefox" "${REPO_ROOT}"
 fi
 
 if wants firefox-harness; then

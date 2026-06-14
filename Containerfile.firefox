@@ -80,21 +80,23 @@ RUN dnf -y install --setopt=install_weak_deps=False \
 #   mesa-* , libdrm           : GL/EGL + DRI drivers (non-NVIDIA GPUs AND the
 #                               llvmpipe software path used when no GPU is present)
 #   libva-nvidia-driver       : the VAAPI->NVDEC bridge (RPM Fusion)
-#   libavcodec-free           : the system libavcodec Firefox's VAAPI decoder loads.
-#                               The "free" build covers the royalty-free codecs
-#                               WebRTC uses (VP8/VP9/AV1); it avoids the full RPM
-#                               Fusion ffmpeg, whose audio-filter deps (rubberband/
-#                               ladspa) don't resolve cleanly on el9. For H.264/HEVC
-#                               hardware decode, swap in full `ffmpeg` where RPM
-#                               Fusion resolves on your host.
+#   ${FFMPEG_PACKAGES}        : the system libavcodec Firefox's VAAPI decoder loads.
+# The codec package is a build-arg so you choose the codec set:
+#   libavcodec-free (DEFAULT) : royalty-free codecs (VP8/VP9/AV1) -- exactly what
+#                               WebRTC uses -- with no extra deps. Builds anywhere.
+#   ffmpeg                    : full codecs incl. H.264/HEVC hardware decode (RPM
+#                               Fusion). Use where RPM Fusion + its deps (ladspa,
+#                               pulled via rubberband) resolve on your build host:
+#                                 podman build --build-arg FFMPEG_PACKAGES=ffmpeg ...
 # install_weak_deps=False keeps libva-nvidia-driver from dragging in the full RPM
 # Fusion driver stack (kmod-nvidia/xorg-x11-drv-nvidia*), which conflicts with the
 # runtime-CDI model. If a HARD dep still pulls those, use plan.md's source build.
+ARG FFMPEG_PACKAGES=libavcodec-free
 RUN dnf -y install --setopt=install_weak_deps=False \
         libva libva-utils \
         libdrm mesa-libgbm mesa-libGL mesa-libEGL mesa-dri-drivers \
         libva-nvidia-driver \
-        libavcodec-free && \
+        ${FFMPEG_PACKAGES} && \
     dnf clean all
 
 # Let the NVIDIA Container Toolkit inject the driver userspace at runtime. The
