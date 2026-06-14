@@ -17,6 +17,20 @@ set -euo pipefail
 
 FIREFOX_BIN="${FIREFOX_BIN:-/usr/bin/firefox}"
 
+# --- Hardware vs software rendering -------------------------------------------
+# The NVIDIA userspace is injected at runtime (NVIDIA Container Toolkit / CDI);
+# its device nodes are the signal a GPU is actually present. Forcing the VAAPI /
+# GL hardware path with no GPU makes Firefox fail to bring up acceleration, so we
+# probe and fall back to software. Mirrors gpu_present() in app/launch.sh.
+# Override: FORCE_HARDWARE=1 (assume a GPU, skip the probe) or FORCE_SOFTWARE=1.
+gpu_present() {
+  [[ "${FORCE_HARDWARE:-}" == "1" ]] && return 0
+  [[ "${FORCE_SOFTWARE:-}" == "1" ]] && return 1
+  compgen -G "/dev/nvidia*" >/dev/null 2>&1 && return 0
+  compgen -G "/dev/dri/renderD*" >/dev/null 2>&1 && return 0
+  return 1
+}
+
 # --- Pin HOME -----------------------------------------------------------------
 # Containers commonly start non-root users with HOME=/ (unwritable and not where
 # the profile/NSS DB should live). Mirror setup-certs.sh's ensure_writable_home
@@ -50,7 +64,52 @@ user_pref("security.default_personal_cert", "Select Automatically");
 // Quiet the onboarding/whatsnew UI in a container (no dedicated policy key).
 user_pref("browser.aboutwelcome.enabled", false);
 user_pref("browser.startup.homepage_override.mstone", "ignore");
+// Maximise web functionality: WebGL (force on even if the container GPU is
+// blocklisted) and WebRTC, both on by default but pinned here so a locked-down
+// profile can't end up with them off.
+user_pref("webgl.force-enabled", true);
+user_pref("media.peerconnection.enabled", true);
 EOF
+
+# --- GPU acceleration + hardware video decode (incl. WebRTC) ------------------
+# Firefox is configured by prefs + env, not Chromium-style switches. Append the
+# acceleration prefs to user.js and set the matching env. With a GPU we turn on
+# GPU compositing (WebRender) and VAAPI hardware decode -- including the WebRTC
+# decode path -- and select the NVIDIA VAAPI backend. With no GPU we keep
+# software WebRender and DON'T touch VAAPI (it can't init without the driver).
+if gpu_present; then
+  echo "firefox-launch: GPU detected -> GPU compositing + VAAPI hardware decode (incl. WebRTC)" >&2
+  cat >> "$PROFILE_DIR/user.js" <<'EOF'
+// --- GPU compositing -------------------------------------------------------
+user_pref("gfx.webrender.all", true);
+user_pref("gfx.canvas.accelerated", true);
+user_pref("layers.acceleration.force-enabled", true);
+// --- Hardware video decode (VAAPI, via the RDD/utility process) -------------
+user_pref("media.hardware-video-decoding.enabled", true);
+user_pref("media.hardware-video-decoding.force-enabled", true);
+user_pref("media.ffmpeg.vaapi.enabled", true);
+user_pref("media.rdd-ffmpeg.enabled", true);
+// --- Hardware decode for WebRTC (VP8/VP9 via VAAPI) -------------------------
+user_pref("media.navigator.mediadatadecoder_vpx_enabled", true);
+EOF
+  # Select the NVIDIA VAAPI backend (same as the Electron image).
+  export LIBVA_DRIVER_NAME="${LIBVA_DRIVER_NAME:-nvidia}"
+  export NVD_BACKEND="${NVD_BACKEND:-direct}"
+  # VAAPI runs in Firefox's RDD/utility process, whose sandbox blocks the libva
+  # driver and /dev/dri without this -- the usual reason VAAPI silently fails in
+  # a container. Required for hardware decode to actually engage.
+  export MOZ_DISABLE_RDD_SANDBOX=1
+  # On X11, WebRender + VAAPI need the EGL backend (default already on Wayland).
+  export MOZ_X11_EGL=1
+else
+  echo "firefox-launch: no GPU detected -> software rendering (hardware decode disabled)" >&2
+  cat >> "$PROFILE_DIR/user.js" <<'EOF'
+// No GPU: keep WebRender but software-backed; leave VAAPI off (can't init).
+user_pref("gfx.webrender.software", true);
+EOF
+  # Stop libva from trying to load the NVIDIA backend without a GPU.
+  unset LIBVA_DRIVER_NAME NVD_BACKEND
+fi
 
 # --- Runtime TLS: import mounted certs into the profile's NSS DB --------------
 # SOURCE (not execute) the SAME importer the Electron app uses, pointed at the

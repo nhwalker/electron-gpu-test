@@ -160,3 +160,48 @@ podman run --rm -v ./my-policies.json:/config/policies.json:ro firefox-ubi9 http
 Env knobs: `FIREFOX_BOOKMARKS` (default `/config/bookmarks.json`) and
 `FIREFOX_POLICIES` (default `/config/policies.json`). Verify what Firefox is
 actually enforcing by opening `about:policies#active` in the browser.
+
+### GPU acceleration, WebRTC & hardware video decode
+
+Like the Electron image, this carries the NVIDIA VAAPI→NVDEC bridge
+(`libva-nvidia-driver`) plus `libavcodec` so Firefox can do **GPU compositing**
+and **hardware video decode, including the WebRTC decode path**. The NVIDIA
+driver userspace is *not* baked in — it's injected at run time by the NVIDIA
+Container Toolkit (CDI), so request a GPU on the run command:
+
+```sh
+podman run --rm --device nvidia.com/gpu=all \
+  -e DISPLAY="$DISPLAY" -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+  firefox-ubi9 https://webrtc.github.io/samples/
+```
+
+`firefox-launch.sh` probes for a GPU (NVIDIA or any DRM render node) and adapts:
+
+- **GPU present** → enables WebRender (`gfx.webrender.all`), VAAPI hardware decode
+  (`media.ffmpeg.vaapi.enabled`, `media.hardware-video-decoding.force-enabled`)
+  and the WebRTC hardware decode path (`media.navigator.mediadatadecoder_vpx_enabled`);
+  selects the NVIDIA VAAPI backend (`LIBVA_DRIVER_NAME=nvidia`, `NVD_BACKEND=direct`)
+  and sets `MOZ_DISABLE_RDD_SANDBOX=1` (VAAPI runs in the sandboxed RDD process —
+  required for hardware decode to engage in a container) and `MOZ_X11_EGL=1`.
+- **No GPU** → falls back to software WebRender; VAAPI is left off (it can't init).
+  Override the probe with `FORCE_HARDWARE=1` or `FORCE_SOFTWARE=1`.
+
+WebRTC and WebGL are pinned on (`media.peerconnection.enabled`, `webgl.force-enabled`)
+so the locked-down profile can't end up with them disabled.
+
+**Verify** on a GPU host: open `about:support` and check *Compositing = WebRender*
+and the *Media* section lists a VAAPI/“HW decoding” entry; run `vainfo` in the
+container; or set `MOZ_LOG=PlatformDecoderModule:5` and look for the VA-API
+decoder being created while playing video.
+
+Caveats:
+
+- **H.264/HEVC hardware decode** needs the full `ffmpeg` (patent codecs). The image
+  ships the lean `libavcodec-free`, which covers the royalty-free WebRTC codecs
+  (VP8/VP9/AV1). Swap in `ffmpeg` from RPM Fusion where it resolves on your host.
+- **WebGL** needs the GPU path (or at least a display + GL driver). Headless with
+  no GPU, Firefox has no software-WebGL fallback (unlike Chromium's SwiftShader),
+  so WebGL is unavailable there — the no-GPU mode targets page/video/WebRTC.
+- **Sending** WebRTC media (camera/mic via `getUserMedia`) needs the relevant
+  devices and PipeWire/v4l2 wired in; this image is configured for the common
+  display case (receiving/decoding streams).
