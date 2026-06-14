@@ -77,3 +77,26 @@ Environment knobs:
 
 This is distinct from the build-time `extra-cas/` mechanism, which only makes the
 image *build* (dnf/npm) trust a TLS-intercepting proxy.
+
+## Firefox image (same cert loading)
+
+`Containerfile.firefox` builds a UBI9 image running **Firefox (ESR)** instead of
+Electron. It loads runtime-mounted certs **the same way** the Electron app does:
+it sources the very same `app/setup-certs.sh`, so the discovery rules, CA-vs-client
+auto-pairing, and `cert-store: imported …` log lines are identical. The only
+difference is the target NSS DB — Chromium/Electron read `~/.pki/nssdb`, while
+Firefox reads `cert9.db`/`key4.db` from its profile, so `firefox/firefox-launch.sh`
+points the shared importer there via the new `TLS_NSSDB` override.
+
+```sh
+podman build -t firefox-ubi9 -f Containerfile.firefox .
+
+podman run --rm \
+  -v /path/to/my-certs:/certs:ro \
+  firefox-ubi9 https://internal.example.test/
+```
+
+The same env knobs apply (`TLS_CERT_DIR`, `TLS_CLIENT_KEY_PASS`). Firefox-specific
+knobs: `FIREFOX_PROFILE` (profile dir, default `~/.mozilla/firefox/container.default`)
+and `FIREFOX_KEEP_SANDBOX=1` (re-enable the content sandbox, which needs a
+container granted unprivileged user namespaces).

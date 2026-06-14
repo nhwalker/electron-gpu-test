@@ -110,7 +110,14 @@ setup_cert_store() {
   [[ -d "$cert_dir" ]] || return 0
 
   ensure_writable_home
-  local nssdb="$HOME/.pki/nssdb"
+  # Which NSS DB to import into. Chromium/Electron read the per-user DB at
+  # ~/.pki/nssdb (the default), but other NSS consumers keep their own: Firefox,
+  # for instance, reads cert9.db/key4.db from its *profile* directory. Letting the
+  # caller override the target with TLS_NSSDB means this exact importer -- same
+  # discovery, pairing, CA-vs-client rules and log lines -- can populate either,
+  # so a Firefox container trusts the same mounted CAs and offers the same client
+  # identities as the Electron app. Unset => unchanged Electron behaviour.
+  local nssdb="${TLS_NSSDB:-$HOME/.pki/nssdb}"
 
   # Collect the PEM files once so we can pair certs with keys by stem.
   local -a all_files=()
