@@ -1,0 +1,77 @@
+# =============================================================================
+# Firefox (ESR) on the shared browser base, with NVIDIA hardware video decode
+# (incl. WebRTC).
+#
+# The GPU/VAAPI stack (incl. the NVIDIA VAAPI->NVDEC bridge), EPEL/RPM Fusion/CRB
+# + Rocky repos, build-time CA trust, the NSS cert toolchain and the default fonts
+# all come from Containerfile.base. This image adds only the firefox package, jq,
+# the codec library, and the policy/config tooling. See Containerfile.base.
+#
+# Certs load the SAME way the Electron app does: firefox-launch.sh sources the
+# exact same app/setup-certs.sh, importing a mounted dir of PEMs into an NSS DB
+# (CAs trusted, cert+key pairs as client identities). The only difference is the
+# target DB -- Firefox reads cert9.db/key4.db from its profile, so the launcher
+# points the importer there via TLS_NSSDB. See app/setup-certs.sh.
+#
+# Build (context = repo root, so app/setup-certs.sh is reachable):
+#   podman build -t firefox-ubi9 -f Containerfile.firefox .
+# Run, mounting a directory of certs to trust / present (default scan dir /certs):
+#   podman run --rm -v /path/to/certs:/certs:ro firefox-ubi9 https://internal.example.test/
+# =============================================================================
+
+ARG BASE_IMAGE=browser-base:undertest
+FROM ${BASE_IMAGE}
+
+# --- Firefox + tooling --------------------------------------------------------
+# firefox : the browser (RHEL/UBI ships the ESR build; its GTK/X GUI libs come in
+#           transitively as RPM deps -- they're not in the shared base).
+# jq      : merges firefox/policies.json + firefox/bookmarks.json into the active
+#           enterprise policy, at build and at launch (setup-config.sh).
+# dejavu-sans-fonts : extra glyph coverage on top of the base's liberation fonts.
+# (nss/nss-tools/openssl that setup-certs.sh needs are provided by the base.)
+RUN dnf -y install --setopt=install_weak_deps=False \
+        firefox \
+        jq \
+        dejavu-sans-fonts && \
+    dnf clean all
+
+# --- Hardware video codec for VAAPI decode (incl. WebRTC) ---------------------
+# The GPU/VAAPI stack + NVIDIA bridge are in the base; this adds the system
+# libavcodec Firefox's VAAPI decoder loads. The codec package is a build-arg:
+#   libavcodec-free (DEFAULT) : royalty-free codecs (VP8/VP9/AV1) -- what WebRTC
+#                               uses -- no extra deps; builds anywhere.
+#   ffmpeg                    : full codecs incl. H.264/HEVC hardware decode (RPM
+#                               Fusion). Use where RPM Fusion + its deps (ladspa,
+#                               via rubberband) resolve on your build host:
+#                                 podman build --build-arg FFMPEG_PACKAGES=ffmpeg ...
+ARG FFMPEG_PACKAGES=libavcodec-free
+RUN dnf -y install --setopt=install_weak_deps=False \
+        ${FFMPEG_PACKAGES} && \
+    dnf clean all
+
+# --- App scripts + Firefox config ---------------------------------------------
+# setup-certs.sh is copied from app/ UNCHANGED -- it IS the Electron app's cert
+# importer; firefox-launch.sh sources it with TLS_NSSDB pointed at the profile.
+# policies.json (feature lockdowns + toolbar) and bookmarks.json (the easy-to-edit
+# toolbar entries) are the baked config defaults; setup-config.sh merges them.
+WORKDIR /app
+COPY app/setup-certs.sh /app/setup-certs.sh
+COPY firefox/firefox-launch.sh /app/firefox-launch.sh
+COPY firefox/setup-config.sh /app/setup-config.sh
+COPY firefox/policies.json firefox/bookmarks.json /app/firefox/
+RUN chmod +x /app/setup-certs.sh /app/firefox-launch.sh /app/setup-config.sh
+
+# Create the non-root user first so we can hand it the policy dirs.
+RUN useradd -m -u 1001 firefox
+
+# Bake the default active policies.json into both locations Firefox reads on
+# Linux, then hand those dirs to the firefox user so a non-root launch can
+# regenerate them when runtime overrides (/config/*) are mounted.
+RUN mkdir -p /etc/firefox/policies && \
+    /app/setup-config.sh && \
+    chown -R firefox:firefox /app /etc/firefox/policies /usr/lib64/firefox/distribution
+USER firefox
+
+# Launch via the wrapper. Pass URLs (and extra Firefox flags) as args:
+#   <image> https://internal.example.test/
+ENTRYPOINT ["/app/firefox-launch.sh"]

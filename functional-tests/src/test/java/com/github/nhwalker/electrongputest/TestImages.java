@@ -43,6 +43,11 @@ final class TestImages {
         return resolve("WEBGL_SPIN_HARNESS_IMAGE", "electron-gpu-test:webgl-spin-harness", "spin-harness");
     }
 
+    /** The Firefox image + a version-matched geckodriver (for policy tests). */
+    static DockerImageName firefoxHarness() {
+        return resolve("FIREFOX_HARNESS_IMAGE", "firefox-ubi9:harness", "firefox-harness");
+    }
+
     private static DockerImageName resolve(String envVar, String defaultTag, String buildTarget) {
         String tag = System.getenv(envVar);
         if (tag == null || tag.isBlank()) {

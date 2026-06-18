@@ -1,0 +1,62 @@
+{
+  "policies": {
+    "DisplayBookmarksToolbar": "always",
+    "NoDefaultBookmarks": true,
+    "Bookmarks": [],
+
+    "DisablePrivateBrowsing": true,
+    "DisableDeveloperTools": true,
+    "BlockAboutConfig": true,
+    "BlockAboutProfiles": true,
+    "BlockAboutSupport": true,
+    "DisableSafeMode": true,
+    "DisableProfileImport": true,
+    "DisableProfileRefresh": true,
+    "DisableForgetButton": true,
+    "DisableSetDesktopBackground": true,
+
+    "DisableFirefoxAccounts": true,
+    "DisableFeedbackCommands": true,
+
+    "PasswordManagerEnabled": false,
+    "OfferToSaveLogins": false,
+    "DisableMasterPasswordCreation": true,
+    "DisablePasswordReveal": true,
+    "DisableFormHistory": true,
+
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "DisablePocket": true,
+    "DontCheckDefaultBrowser": true,
+    "DisableAppUpdate": true,
+    "DisableSystemAddonUpdate": true,
+
+    "ExtensionSettings": {
+      "*": { "installation_mode": "blocked" }
+    },
+
+    "FirefoxHome": {
+      "Search": true,
+      "TopSites": false,
+      "SponsoredTopSites": false,
+      "Highlights": false,
+      "Pocket": false,
+      "SponsoredPocket": false,
+      "Snippets": false,
+      "Locked": true
+    },
+
+    "UserMessaging": {
+      "WhatsNew": false,
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "UrlbarInterventions": false,
+      "MoreFromMozilla": false,
+      "SkipOnboarding": true,
+      "Locked": true
+    },
+
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": ""
+  }
+}
