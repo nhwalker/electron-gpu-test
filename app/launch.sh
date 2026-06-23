@@ -67,13 +67,42 @@ if [[ -n "${ELECTRON_USER_DATA:-}" ]]; then
 fi
 
 if gpu_present; then
-  RENDER_FLAGS=(
-    --enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiOnNvidiaGPUs,VaapiIgnoreDriverChecks
-    --use-gl=angle
-    --use-angle=gl
-    --ignore-gpu-blocklist
-    --disable-gpu-driver-bug-workarounds
-  )
+  if [[ "${GPU_FULL:-}" == "1" ]]; then
+    # --- Maximize chrome://gpu hardware rows (opt-in) -------------------------
+    # Adds the Vulkan stack on top of VAAPI decode so Vulkan, WebGPU and Skia
+    # Graphite also report "hardware accelerated", not just decode + WebGL.
+    #   - Vulkan,VulkanFromANGLE,DefaultANGLEVulkan : turn Vulkan on and make
+    #     ANGLE default to it (drives the Vulkan/Graphite rows; Dawn/WebGPU uses
+    #     Vulkan directly on Linux).
+    #   - SkiaGraphite                              : the Graphite raster backend.
+    #   - --use-angle=vulkan                        : WebGL/Canvas over ANGLE-on-Vulkan.
+    #   - --enable-unsafe-webgpu                    : flips the WebGPU row to hardware.
+    # Needs libvulkan.so.1 (vulkan-loader, in the image) plus the NVIDIA Vulkan
+    # ICD injected by the Container Toolkit (NVIDIA_DRIVER_CAPABILITIES=all).
+    #
+    # CAVEAT: the VAAPI decode zero-copy path was validated on the ANGLE *GL*
+    # backend; on the Vulkan backend decode may regress. Verify decode still
+    # works in chrome://media-internals -- if it doesn't, drop GPU_FULL and use
+    # the default GL path below. Video Encode stays software regardless: the
+    # nvidia-vaapi-driver bridge is decode-only (no VAAPI encode on NVIDIA).
+    echo "launch.sh: GPU_FULL=1 -> Vulkan/WebGPU/Graphite on the ANGLE Vulkan backend" >&2
+    RENDER_FLAGS=(
+      --enable-features=UseOzonePlatform,Vulkan,VulkanFromANGLE,DefaultANGLEVulkan,SkiaGraphite,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiOnNvidiaGPUs,VaapiIgnoreDriverChecks
+      --use-gl=angle
+      --use-angle=vulkan
+      --enable-unsafe-webgpu
+      --ignore-gpu-blocklist
+      --disable-gpu-driver-bug-workarounds
+    )
+  else
+    RENDER_FLAGS=(
+      --enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,VaapiOnNvidiaGPUs,VaapiIgnoreDriverChecks
+      --use-gl=angle
+      --use-angle=gl
+      --ignore-gpu-blocklist
+      --disable-gpu-driver-bug-workarounds
+    )
+  fi
 else
   echo "launch.sh: no GPU detected -> software rendering (NVIDIA hardware decode disabled)" >&2
   # The NVIDIA VAAPI driver can't initialise without the GPU; stop libva from

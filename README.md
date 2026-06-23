@@ -41,6 +41,44 @@ podman run --rm --device nvidia.com/gpu=all \
 Run (Wayland/Weston) and the rest of the verification flow are documented in
 `plan.md` and `app/launch.sh`.
 
+## GPU rendering knobs
+
+`launch.sh` probes for a GPU and, when one is present, launches on the ANGLE
+**GL** backend with NVIDIA VAAPI hardware **decode** enabled. This is the proven
+default and is all most uses need.
+
+- `FORCE_HARDWARE=1` — skip the probe and assume a GPU is present.
+- `FORCE_SOFTWARE=1` — force software rendering (no GPU path).
+- `SOFTWARE_WEBGL=1` — software rendering that still provides WebGL via SwiftShader
+  (only relevant when there's no GPU, e.g. CI).
+- `GPU_FULL=1` — **opt-in**: on top of VAAPI decode, also turn on **Vulkan,
+  WebGPU and Skia Graphite** by switching ANGLE to the Vulkan backend. This makes
+  almost every `chrome://gpu` row report "hardware accelerated".
+
+What `GPU_FULL=1` does and does not get you:
+
+- ✅ Hardware for Canvas, Compositing, Rasterization, OpenGL, WebGL/WebGL2,
+  Vulkan, WebGPU, Skia Graphite, and Video Decode.
+- ❌ **Video Encode** stays software no matter what — the `nvidia-vaapi-driver`
+  bridge is decode-only, and Chromium on Linux only does hardware encode through
+  VAAPI (it never drives NVENC). This row cannot go green on this stack.
+- ⚠️ The VAAPI zero-copy decode path was validated on the ANGLE **GL** backend;
+  on the Vulkan backend decode may regress. After enabling `GPU_FULL=1`, confirm
+  decode still works in `chrome://media-internals`. If it doesn't, drop the flag
+  and keep the default GL path.
+
+`GPU_FULL=1` also requires the Vulkan loader (`vulkan-loader`, baked into the
+image) and the NVIDIA Vulkan ICD, which the Container Toolkit injects at runtime
+because `NVIDIA_DRIVER_CAPABILITIES=all` includes the graphics capability.
+
+```sh
+podman run --rm --device nvidia.com/gpu=all \
+  -e OZONE=x11 -e DISPLAY="$DISPLAY" -e GPU_FULL=1 \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+  -v "$XAUTHORITY":/home/app/.Xauthority:ro -e XAUTHORITY=/home/app/.Xauthority \
+  electron-gpu-test chrome://gpu
+```
+
 ## Persistent web storage (sessions, cookies, cache)
 
 The container is ephemeral, so by default every cookie, `localStorage`,
