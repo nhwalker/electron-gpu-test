@@ -76,8 +76,16 @@ RUN dnf -y install --setopt=install_weak_deps=False \
         alsa-lib pango cairo cairo-gobject gtk3 expat \
         libuuid \
         libva libva-utils \
+        vulkan-loader \
         dbus-libs && \
     dnf clean all
+# vulkan-loader provides libvulkan.so.1, the Vulkan ICD loader that Chromium's
+# Vulkan/WebGPU/Skia-Graphite paths dlopen. The NVIDIA Vulkan driver itself (the
+# ICD .so + its /usr/share/vulkan/icd.d/*.json manifest) is NOT baked in -- it is
+# injected at run time by the NVIDIA Container Toolkit via CDI, gated on
+# NVIDIA_DRIVER_CAPABILITIES including "graphics"/"display" (we set =all below).
+# Do NOT add mesa-vulkan-drivers: that ships the software/AMD/Intel ICDs, which
+# we don't want shadowing the injected NVIDIA ICD.
 
 # --- Runtime libs absent from UBI9, sourced from the Rocky fallback repo ---
 # UBI9's public repos don't carry these; the Rocky 9 last-resort repo above does:
