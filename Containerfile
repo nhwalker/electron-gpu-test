@@ -129,9 +129,11 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 WORKDIR /app
 COPY ./app/ /app/
 
-# Install dependencies (downloads the Electron 41.1.1 prebuilt binary) and make
-# the launch wrapper executable. Skip Electron's run-time download of extra
-# binaries we don't need.
+# Install dependencies (the Electron 41.1.1 prebuilt binary, plus the two small
+# runtime deps the vnc:// viewer needs: @novnc/novnc, whose files are served to
+# the viewer page, and ws, the WebSocket server the main process bridges onto a
+# VNC server's TCP port) and make the launch wrapper executable. Skip Electron's
+# run-time download of extra binaries we don't need.
 RUN npm install --omit=optional && \
     chmod +x /app/launch.sh /app/setup-certs.sh && \
     npm cache clean --force

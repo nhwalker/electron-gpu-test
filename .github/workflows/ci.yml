@@ -36,6 +36,15 @@ jobs:
       - name: Syntax-check main.js
         run: node --check app/main.js
 
+      - name: Syntax-check vnc.js
+        run: node --check app/vnc.js
+
+      # The vnc:// support is testable without a display or a container: these
+      # cover URL parsing, the loopback viewer server and the WebSocket<->TCP
+      # bridge (see tests/vnc.test.js).
+      - name: Test the vnc:// bridge
+        run: node --test tests/vnc.test.js
+
       - name: Syntax-check launch.sh
         run: bash -n app/launch.sh
 
@@ -86,6 +95,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Same treatment for the VNC server sidecar the vnc:// test connects to.
+      - name: Build VNC server image
+        uses: docker/build-push-action@v6
+        with:
+          context: functional-tests/containers
+          file: functional-tests/containers/vnc-server.Dockerfile
+          load: true
+          tags: electron-gpu-test:vnc-server
+          cache-from: type=gha,scope=vnc-server
+          cache-to: type=gha,mode=max,scope=vnc-server
+
       # Same treatment for the Xvfb sidecar image (separate cache scope).
       - name: Build Xvfb sidecar image
         uses: docker/build-push-action@v6
@@ -99,8 +119,9 @@ jobs:
 
       # The thin test-harness layers build FROM the daemon-local production tag,
       # which buildx's container driver can't see -- so build them with plain
-      # `docker build` via the same script developers use locally. The base and
-      # xvfb targets are skipped here: they were just built (cached) above.
+      # `docker build` via the same script developers use locally. The base,
+      # xvfb and vnc-server targets are skipped here: they were just built
+      # (cached) above.
       - name: Build test harness images
         env:
           CONTAINER_TOOL: docker

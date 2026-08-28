@@ -7,6 +7,10 @@
   "scripts": {
     "start": "electron ."
   },
+  "dependencies": {
+    "@novnc/novnc": "1.7.0",
+    "ws": "8.18.3"
+  },
   "devDependencies": {
     "electron": "41.1.1"
   }

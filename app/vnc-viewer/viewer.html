@@ -1,0 +1,50 @@
+<!doctype html>
+<!--
+  The noVNC-backed page a `vnc://host:port` argument is opened in. It is served
+  from the app's own loopback server (see app/vnc.js), which also bridges the
+  WebSocket this page speaks RFB over onto a TCP connection to the VNC server.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VNC</title>
+    <!-- Inline empty icon: stops the browser asking for a /favicon.ico we do not serve. -->
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/viewer.css" />
+  </head>
+  <body>
+    <header id="toolbar">
+      <span id="indicator" class="indicator" data-state="connecting"></span>
+      <span id="target" class="target">Connecting…</span>
+      <span id="message" class="message"></span>
+      <span class="spacer"></span>
+      <button id="ctrl-alt-del" type="button" title="Send Ctrl+Alt+Delete to the remote desktop" disabled>
+        Ctrl+Alt+Del
+      </button>
+      <button id="fullscreen" type="button" title="Fill the screen with the remote desktop">Fullscreen</button>
+      <button id="connect" type="button" hidden>Reconnect</button>
+    </header>
+
+    <main id="screen" aria-label="Remote desktop"></main>
+
+    <dialog id="credentials-dialog">
+      <form method="dialog" id="credentials-form">
+        <h1 id="credentials-title">Authentication required</h1>
+        <label id="username-row" hidden>
+          <span>Username</span>
+          <input type="text" id="username" autocomplete="off" />
+        </label>
+        <label id="password-row">
+          <span>Password</span>
+          <input type="password" id="password" autocomplete="off" />
+        </label>
+        <div class="actions">
+          <button type="submit" value="connect">Connect</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/viewer.js"></script>
+  </body>
+</html>
