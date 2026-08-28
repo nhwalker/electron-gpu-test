@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>A2 — Opus over a byte stream</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./common/player.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Option A2 — <span id="transport" class="transport"></span></h1>
+      <p>
+        The server encodes its sink monitor to Opus and length-prefixes each
+        packet (RFC 4571); this page deframes them, decodes with WebCodecs'
+        <code>AudioDecoder</code> and hands the samples to the same shared
+        <code>AudioWorklet</code>. Client code specific to this option:
+        <code>client.js</code>, about 100 lines — and about a sixteenth of A1's
+        bandwidth.
+      </p>
+
+      <div class="panel">
+        <button id="start" type="button">Start audio</button>
+        <span id="status">idle</span>
+        <table>
+          <tbody id="stats"></tbody>
+        </table>
+      </div>
+
+      <p>
+        The picture that goes with this sound is on VNC port 5900 — point the
+        Electron app (or any VNC client) at it.
+      </p>
+    </main>
+
+    <script type="module">
+      import { run } from './common/ui.js';
+      import { connect } from './client.js';
+
+      run({ transport: 'Opus in RTP (RFC 4571 framing)', sampleRate: 48000, channels: 2, connect });
+    </script>
+  </body>
+</html>

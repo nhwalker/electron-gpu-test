@@ -1,0 +1,75 @@
+:root {
+  --bg: #14161a;
+  --panel: #21262e;
+  --fg: #dfe3ea;
+  --muted: #98a2b3;
+  --accent: #4c8dff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 32px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 system-ui, "Liberation Sans", sans-serif;
+}
+
+main { max-width: 620px; margin: 0 auto; }
+
+h1 { font-size: 20px; margin: 0 0 4px; }
+
+.transport {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+p { color: var(--muted); }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid #3d4552;
+  border-radius: 8px;
+  padding: 18px;
+  margin-top: 20px;
+}
+
+button {
+  font: inherit;
+  color: var(--fg);
+  background: #2f3641;
+  border: 1px solid #3d4552;
+  border-radius: 4px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; }
+
+#status {
+  margin-left: 12px;
+  color: var(--muted);
+}
+
+#status[data-state="playing"] { color: #3fb950; }
+#status[data-state="error"] { color: #f85149; }
+
+table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+
+th, td {
+  text-align: left;
+  padding: 4px 0;
+  font-weight: normal;
+  border-bottom: 1px solid #2b313a;
+}
+
+th { color: var(--muted); width: 45%; }
+td { font-variant-numeric: tabular-nums; }
+
+code {
+  background: #14161a;
+  border-radius: 3px;
+  padding: 1px 5px;
+}

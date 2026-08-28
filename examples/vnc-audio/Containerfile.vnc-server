@@ -1,0 +1,73 @@
+# =============================================================================
+# Example VNC server WITH a capturable audio device -- the base image for the
+# two audio-transport examples (Containerfile.audio-a1, Containerfile.audio-a2).
+#
+# This is the "server we control" from the audio design discussion: a desktop on
+# Xvfb, published over RFB by x11vnc, plus a PipeWire sound server exposing the
+# PulseAudio API, with a null sink whose *monitor* is what every audio option
+# captures from. On its own this image streams no audio anywhere -- it just
+# makes sound exist and be capturable. The derived images add one transport each.
+#
+# Rocky Linux 9 rather than UBI9 (which the product image uses): the audio and X
+# packages here live in AppStream/EPEL, and this is a server-side example, not
+# something we ship. Everything is a stock RPM -- no source builds.
+# =============================================================================
+FROM quay.io/rockylinux/rockylinux:9
+
+# EPEL carries x11vnc and websockify; CRB backs a few of the X libraries.
+RUN dnf -y install epel-release && \
+    dnf config-manager --set-enabled crb && \
+    dnf clean all
+
+# --- The desktop: a virtual X display and the RFB server that publishes it ----
+# xorg-x11-apps supplies the handful of clients that draw the demo picture.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        xorg-x11-server-Xvfb \
+        xorg-x11-apps \
+        x11vnc \
+        procps-ng \
+    && dnf clean all
+
+# --- Sound: PipeWire, driving the PulseAudio API ------------------------------
+# pipewire-pulseaudio provides the PulseAudio socket and *conflicts* with the
+# classic pulseaudio daemon, so exactly one of them can be installed. PipeWire is
+# the current default on EL9 and the capture command is identical either way
+# (`parec`/`pulsesrc` against a monitor source), which is the point worth seeing:
+# nothing downstream of the sound server cares which one is running.
+#
+# pulseaudio-utils is the *client* tools (pactl, parec, paplay) and coexists
+# with either daemon. wireplumber is PipeWire's session manager; dbus-daemon is
+# the session bus it needs, since there is no systemd user session in here.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        pipewire \
+        pipewire-pulseaudio \
+        pipewire-utils \
+        wireplumber \
+        pulseaudio-utils \
+        dbus-daemon \
+    && dnf clean all
+
+# --- GStreamer: the test tone here, the audio transports in the derived images -
+# tcpserversink (base) and pulsesrc/pulsesink (good) are what the derived images
+# build their pipelines from; audiotestsrc (base) generates the tone below.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        gstreamer1 \
+        gstreamer1-plugins-base \
+        gstreamer1-plugins-good \
+    && dnf clean all
+
+# Fail the build here rather than at run time if a pipeline element is missing.
+RUN gst-inspect-1.0 audiotestsrc > /dev/null && \
+    gst-inspect-1.0 pulsesrc     > /dev/null && \
+    gst-inspect-1.0 tcpserversink > /dev/null
+
+# The entrypoint brings up X, the sound server, the null sink and the tone, then
+# runs every hook a derived image dropped in /etc/vnc-audio.d/ before exec'ing
+# x11vnc. Adding a transport is therefore one file plus its packages.
+COPY server/entrypoint.sh /usr/local/bin/vnc-audio-entrypoint.sh
+RUN chmod +x /usr/local/bin/vnc-audio-entrypoint.sh && mkdir -p /etc/vnc-audio.d
+
+# RFB. The derived images expose the audio and demo ports on top of this.
+EXPOSE 5900
+
+ENTRYPOINT ["/usr/local/bin/vnc-audio-entrypoint.sh"]

@@ -1,0 +1,39 @@
+# =============================================================================
+# Option A1: RAW PCM over a byte stream.
+#
+# The server does no encoding at all -- it copies the sink monitor onto a TCP
+# socket as interleaved signed 16-bit little-endian samples, and the browser
+# feeds them straight into an AudioWorklet. There is no framing, no container
+# and no codec anywhere in the path.
+#
+#   pulsesrc <sink>.monitor -> S16LE 48kHz stereo -> tcpserversink :5901
+#
+# Cost on the wire: 48000 * 2ch * 2 bytes = 1.5 Mbit/s, constant.
+# Cost in code:     one pipeline here, ~60 lines in the browser.
+#
+# The Electron app would bridge :5901 to a WebSocket exactly the way it already
+# bridges the RFB port. For a browser to reach it *without* that app, this image
+# also runs websockify, which serves the demo page and relays the same TCP
+# stream to it over a WebSocket -- the same shape the app's bridge provides.
+# =============================================================================
+ARG BASE_IMAGE=vnc-audio:server
+FROM ${BASE_IMAGE}
+
+# websockify: TCP <-> WebSocket, and a static file server for the demo page.
+# EPEL packages it; the pip fallback keeps this image buildable where it doesn't.
+RUN (dnf -y install --setopt=install_weak_deps=False python3-websockify || \
+     (dnf -y install --setopt=install_weak_deps=False python3-pip && pip3 install websockify)) && \
+    dnf clean all
+
+# The example client: a Start button, the AudioWorklet ring buffer with its
+# drift correction, and live stats. common/ is shared with the A2 example, so
+# the diff between the two clients is only the transport and the decode.
+COPY demo/common/ /srv/demo/common/
+COPY demo/a1/     /srv/demo/
+
+# One hook file is the whole server-side difference between A1 and A2.
+COPY server/audio-a1.sh /etc/vnc-audio.d/10-audio-a1.sh
+RUN chmod +x /etc/vnc-audio.d/10-audio-a1.sh
+
+# 5900 RFB (from the base) | 5901 the raw PCM stream | 8080 the demo page
+EXPOSE 5900 5901 8080
