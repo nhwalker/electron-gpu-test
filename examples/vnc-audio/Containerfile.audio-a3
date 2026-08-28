@@ -1,0 +1,48 @@
+# =============================================================================
+# Option A3: OPUS IN WEBM, played by the browser's own MediaSource.
+#
+# Same encoder as A2; the difference is what happens to the frames afterwards.
+# Instead of framing them for the client to decode, they go into a WebM
+# container and the browser demuxes, decodes, buffers and clocks them:
+#
+#   pulsesrc <sink>.monitor -> opusenc -> webmmux streamable=true -> socket
+#
+# The browser end is therefore the smallest of the three -- an <audio> element
+# and a SourceBuffer -- but MediaSource is built for video-on-demand, not for
+# live: it will happily buffer further and further behind, so the client has to
+# watch the live edge and seek forward, which is the code A1 and A2 spend on a
+# ring buffer instead.
+#
+# One pipeline per client (see the hook): a container needs its header, so
+# fanning one byte stream out to late joiners is not free the way it is for raw
+# samples or self-describing packets.
+#
+# Ports and the websockify demo bridge are identical to the other two images.
+# =============================================================================
+ARG BASE_IMAGE=vnc-audio:server
+FROM ${BASE_IMAGE}
+
+# opusenc: see the note in Containerfile.audio-a2. webmmux is in
+# gstreamer1-plugins-good, already in the base image. socat gives each client
+# its own pipeline.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        gstreamer1-plugins-bad-free \
+        socat \
+    && dnf clean all
+RUN gst-inspect-1.0 opusenc  > /dev/null && \
+    gst-inspect-1.0 webmmux  > /dev/null && \
+    gst-inspect-1.0 fdsink   > /dev/null
+
+RUN (dnf -y install --setopt=install_weak_deps=False python3-websockify || \
+     (dnf -y install --setopt=install_weak_deps=False python3-pip && pip3 install websockify)) && \
+    dnf clean all
+
+COPY demo/common/ /srv/demo/common/
+COPY demo/a3/     /srv/demo/
+
+COPY server/audio-a3-pipeline.sh /usr/local/bin/audio-a3-pipeline.sh
+COPY server/audio-a3.sh /etc/vnc-audio.d/10-audio-a3.sh
+RUN chmod +x /usr/local/bin/audio-a3-pipeline.sh /etc/vnc-audio.d/10-audio-a3.sh
+
+# 5900 RFB (from the base) | 5901 the WebM/Opus stream | 8080 the demo page
+EXPOSE 5900 5901 8080

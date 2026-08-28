@@ -4,6 +4,8 @@
 // AudioWorklet. A1 gets there by scaling integers; A2 by decoding Opus. Nothing
 // below this line knows which.
 
+import { dominantFrequency } from './spectrum.js';
+
 const WORKLET_URL = new URL('./pcm-worklet.js', import.meta.url);
 
 export class PcmPlayer {
@@ -69,17 +71,9 @@ export class PcmPlayer {
     this.node.port.postMessage({ planes }, planes.map((p) => p.buffer));
   }
 
-  /**
-   * The loudest frequency currently playing -- how the demo shows that the
-   * server's test tone survived the trip, and what an automated check asserts on.
-   */
+  /** The loudest frequency currently playing. */
   dominantFrequency() {
-    if (!this.analyser) return 0;
-    const bins = new Float32Array(this.analyser.frequencyBinCount);
-    this.analyser.getFloatFrequencyData(bins);
-    let peak = 0;
-    for (let i = 1; i < bins.length; i++) if (bins[i] > bins[peak]) peak = i;
-    return (peak * this.context.sampleRate) / this.analyser.fftSize;
+    return dominantFrequency(this.analyser);
   }
 
   /** What the browser itself adds on top of our buffer, in milliseconds. */
@@ -92,4 +86,24 @@ export class PcmPlayer {
     if (this.context) await this.context.close();
     this.context = this.node = this.analyser = null;
   }
+}
+
+/**
+ * What A1 and A2 both do before their first byte arrives: bring up the player
+ * and route its stats into the page. Kept here so each option's client.js is
+ * about its transport and nothing else.
+ */
+export async function startPcmPlayer({ channels, targetLatencyMs }, hooks) {
+  const player = new PcmPlayer({
+    channels,
+    targetLatencyMs,
+    onStats: (s) => {
+      hooks.stat('buffered', `${s.bufferedMs.toFixed(0)} ms${s.filling ? ' (filling)' : ''}`);
+      hooks.stat('underruns', s.underruns);
+      hooks.stat('drift corrections', `${s.dropped} frames dropped`);
+      hooks.stat('overflow drops', `${s.overflows} frames`);
+    }
+  });
+  await player.start();
+  return player;
 }

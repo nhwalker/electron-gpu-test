@@ -17,8 +17,8 @@
 # Cost on the wire: ~96 kbit/s at the default bitrate (16x less than A1).
 # Cost in code:     one longer pipeline here, ~100 lines in the browser.
 #
-# Ports and the websockify demo bridge are identical to the A1 image, so the two
-# can be swapped underneath the same client configuration.
+# Ports and the websockify demo bridge are identical to the other images, so the
+# three can be swapped underneath the same client configuration.
 # =============================================================================
 ARG BASE_IMAGE=vnc-audio:server
 FROM ${BASE_IMAGE}

@@ -1,15 +1,20 @@
 // Option A1's client: raw PCM in, samples out. This file is the entire
-// difference from A2 on the browser side.
+// difference from A2 and A3 on the browser side.
 //
 // Wire format: nothing. The server's pipeline caps say S16LE / 48000 / stereo,
 // so byte 2n of the stream is the low half of a sample and that is all there is
 // to know. The one wrinkle is that a byte stream has no frames: a WebSocket
 // message can end in the middle of a sample, so we carry the remainder.
 
+import { startPcmPlayer } from '../common/pcm-player.js';
+
 const CHANNELS = 2;
+const TARGET_LATENCY_MS = 120;
 const BYTES_PER_FRAME = CHANNELS * 2; // 2 channels, 16 bits each
 
-export function connect(player, hooks) {
+export async function connect(hooks) {
+  const player = await startPcmPlayer({ channels: CHANNELS, targetLatencyMs: TARGET_LATENCY_MS }, hooks);
+
   // In this demo, websockify is relaying the server's TCP port. In the Electron
   // app the same stream would arrive from the main process's bridge instead --
   // the page cannot tell the difference.
@@ -40,5 +45,9 @@ export function connect(player, hooks) {
     carry = merged.slice(usable);
   });
 
-  return () => ws.close();
+  return {
+    dominantFrequency: () => player.dominantFrequency(),
+    latencyMs: () => player.outputLatencyMs(),
+    stop: () => ws.close()
+  };
 }

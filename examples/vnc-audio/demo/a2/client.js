@@ -1,5 +1,5 @@
 // Option A2's client: framed Opus in, samples out. This file is the entire
-// difference from A1 on the browser side.
+// difference from A1 and A3 on the browser side.
 //
 // Wire format, produced by `opusenc ! rtpopuspay ! rtpstreampay`:
 //
@@ -10,11 +10,16 @@
 // timestamp we get for free. WebCodecs decodes the frames; no container, no
 // demuxer, no library.
 
+import { startPcmPlayer } from '../common/pcm-player.js';
+
 const SAMPLE_RATE = 48000;
 const CHANNELS = 2;
+const TARGET_LATENCY_MS = 120;
 const RTP_MIN_HEADER = 12;
 
-export function connect(player, hooks) {
+export async function connect(hooks) {
+  const player = await startPcmPlayer({ channels: CHANNELS, targetLatencyMs: TARGET_LATENCY_MS }, hooks);
+
   let decoded = 0;
   let packets = 0;
   let gaps = 0;
@@ -95,9 +100,13 @@ export function connect(player, hooks) {
     hooks.stat('sequence gaps', gaps);
   });
 
-  return () => {
-    ws.close();
-    if (decoder.state !== 'closed') decoder.close();
+  return {
+    dominantFrequency: () => player.dominantFrequency(),
+    latencyMs: () => player.outputLatencyMs(),
+    stop: () => {
+      ws.close();
+      if (decoder.state !== 'closed') decoder.close();
+    }
   };
 }
 

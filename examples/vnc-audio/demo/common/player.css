@@ -73,3 +73,12 @@ code {
   border-radius: 3px;
   padding: 1px 5px;
 }
+
+/* A3 only: the browser's own player, which is the whole point of that option.
+   The other two examples have no media element to show. */
+#output {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  height: 34px;
+}

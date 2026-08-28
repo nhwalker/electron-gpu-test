@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>A3 — WebM over a byte stream</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./common/player.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Option A3 — <span id="transport" class="transport"></span></h1>
+      <p>
+        The server wraps the same Opus frames A2 sends in a WebM container, and
+        this page hands the bytes to a <code>SourceBuffer</code> — the browser
+        demuxes, decodes, buffers and clocks them. No framing to parse, no codec
+        API, no ring buffer; the code that remains is about keeping the playhead
+        near the live edge, which MediaSource will not do for you.
+      </p>
+
+      <div class="panel">
+        <button id="start" type="button">Start audio</button>
+        <span id="status">idle</span>
+        <!-- The browser's own player, shown because in this option it is the
+             player: A1 and A2 have no media element at all. -->
+        <audio id="output" controls></audio>
+        <table>
+          <tbody id="stats"></tbody>
+        </table>
+      </div>
+
+      <p>
+        The picture that goes with this sound is on VNC port 5900 — point the
+        Electron app (or any VNC client) at it.
+      </p>
+    </main>
+
+    <script type="module">
+      import { run } from './common/ui.js';
+      import { connect } from './client.js';
+
+      run({ transport: 'Opus in WebM (MediaSource)', connect });
+    </script>
+  </body>
+</html>

@@ -15,6 +15,7 @@
 # bridges the RFB port. For a browser to reach it *without* that app, this image
 # also runs websockify, which serves the demo page and relays the same TCP
 # stream to it over a WebSocket -- the same shape the app's bridge provides.
+# Ports match the other two options, so the three images are swappable.
 # =============================================================================
 ARG BASE_IMAGE=vnc-audio:server
 FROM ${BASE_IMAGE}
@@ -26,12 +27,12 @@ RUN (dnf -y install --setopt=install_weak_deps=False python3-websockify || \
     dnf clean all
 
 # The example client: a Start button, the AudioWorklet ring buffer with its
-# drift correction, and live stats. common/ is shared with the A2 example, so
-# the diff between the two clients is only the transport and the decode.
+# drift correction, and live stats. common/ is shared with the other examples,
+# so the diff between the clients is only the transport and the decode.
 COPY demo/common/ /srv/demo/common/
 COPY demo/a1/     /srv/demo/
 
-# One hook file is the whole server-side difference between A1 and A2.
+# One hook file is the whole server-side difference between the options.
 COPY server/audio-a1.sh /etc/vnc-audio.d/10-audio-a1.sh
 RUN chmod +x /etc/vnc-audio.d/10-audio-a1.sh
 

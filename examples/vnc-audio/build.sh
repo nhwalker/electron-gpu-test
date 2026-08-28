@@ -9,12 +9,13 @@
 #   server     the VNC + sound server everything else builds FROM
 #   audio-a1   server + raw PCM transport + its demo client
 #   audio-a2   server + Opus transport + its demo client
+#   audio-a3   server + WebM/Opus transport + its demo client
 #
 # Tooling: podman or docker, auto-detected (podman preferred, matching the
 # project README); override with CONTAINER_TOOL=docker|podman.
 #
 # Tags default to what the run commands in README.md use, and can be overridden
-# with SERVER_IMAGE / AUDIO_A1_IMAGE / AUDIO_A2_IMAGE.
+# with SERVER_IMAGE / AUDIO_A1_IMAGE / AUDIO_A2_IMAGE / AUDIO_A3_IMAGE.
 # =============================================================================
 set -euo pipefail
 
@@ -35,14 +36,15 @@ fi
 SERVER_IMAGE="${SERVER_IMAGE:-vnc-audio:server}"
 AUDIO_A1_IMAGE="${AUDIO_A1_IMAGE:-vnc-audio:audio-a1}"
 AUDIO_A2_IMAGE="${AUDIO_A2_IMAGE:-vnc-audio:audio-a2}"
+AUDIO_A3_IMAGE="${AUDIO_A3_IMAGE:-vnc-audio:audio-a3}"
 
-ALL_TARGETS=(server audio-a1 audio-a2)
+ALL_TARGETS=(server audio-a1 audio-a2 audio-a3)
 TARGETS=("$@")
 [[ ${#TARGETS[@]} -eq 0 ]] && TARGETS=("${ALL_TARGETS[@]}")
 
 for t in "${TARGETS[@]}"; do
     case "${t}" in
-        server|audio-a1|audio-a2) ;;
+        server|audio-a1|audio-a2|audio-a3) ;;
         *) echo "error: unknown target '${t}' (valid: ${ALL_TARGETS[*]})" >&2; exit 1 ;;
     esac
 done
@@ -70,6 +72,11 @@ fi
 if wants audio-a2; then
     build -t "${AUDIO_A2_IMAGE}" --build-arg BASE_IMAGE="${SERVER_IMAGE}" \
         -f "${SCRIPT_DIR}/Containerfile.audio-a2" "${SCRIPT_DIR}"
+fi
+
+if wants audio-a3; then
+    build -t "${AUDIO_A3_IMAGE}" --build-arg BASE_IMAGE="${SERVER_IMAGE}" \
+        -f "${SCRIPT_DIR}/Containerfile.audio-a3" "${SCRIPT_DIR}"
 fi
 
 echo ">> done: ${TARGETS[*]}"
