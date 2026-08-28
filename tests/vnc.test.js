@@ -86,6 +86,27 @@ describe('parseVncUrl', () => {
     assert.equal(parseVncUrl('vnc://host:5901?view_only=1').partition, 'persist:vnc-host_5901');
   });
 
+  it('leaves desktop audio off unless the URL asks for it', () => {
+    assert.equal(parseVncUrl('vnc://host').audio, null);
+    assert.equal(parseVncUrl('vnc://host?audio=off').audio, null);
+
+    // `audio=on` means the conventional port; a number names another one.
+    assert.deepEqual(parseVncUrl('vnc://host?audio=1').audio,
+      { port: 5901, channels: 2, targetLatencyMs: 120 });
+    assert.equal(parseVncUrl('vnc://host?audio=on').audio.port, 5901);
+    assert.equal(parseVncUrl('vnc://host?audio=5905').audio.port, 5905);
+
+    const tuned = parseVncUrl('vnc://host?audio=on&audio_latency=250&audio_channels=1').audio;
+    assert.equal(tuned.targetLatencyMs, 250);
+    assert.equal(tuned.channels, 1);
+  });
+
+  it('rejects nonsense audio options', () => {
+    assert.throws(() => parseVncUrl('vnc://host?audio=loud'), /audio must be/);
+    assert.throws(() => parseVncUrl('vnc://host?audio=on&audio_latency=5'), /audio_latency must be/);
+    assert.throws(() => parseVncUrl('vnc://host?audio=on&audio_channels=7'), /audio_channels must be/);
+  });
+
   it('rejects a malformed vnc:// URL with a readable reason', () => {
     assert.throws(() => parseVncUrl('vnc://'), /no host/);
     assert.throws(() => parseVncUrl('vnc://host?resize=huge'), /resize must be/);
@@ -221,6 +242,86 @@ describe('VncViewerServer', () => {
 });
 
 /** A GET against the viewer server with full control over the request headers. */
+describe('VncViewerServer with desktop audio', () => {
+  // Two stand-in servers on two ports, as a real host would have: RFB on one,
+  // the audio stream on the other.
+  let rfbServer;
+  let audioServer;
+  let viewer;
+  let origin;
+  let audioToken;
+  let silentToken;
+
+  before(async () => {
+    rfbServer = net.createServer((socket) => socket.write('RFB 003.008\n'));
+    audioServer = net.createServer((socket) => socket.write('opus-frames'));
+    await new Promise((resolve) => rfbServer.listen(0, '127.0.0.1', resolve));
+    await new Promise((resolve) => audioServer.listen(0, '127.0.0.1', resolve));
+
+    viewer = new VncViewerServer();
+    audioToken = viewer.register(parseVncUrl(
+      `vnc://127.0.0.1:${rfbServer.address().port}?audio=${audioServer.address().port}`));
+    silentToken = viewer.register(parseVncUrl(`vnc://127.0.0.1:${rfbServer.address().port}`));
+    origin = await viewer.start();
+  });
+
+  after(async () => {
+    viewer.close();
+    await new Promise((resolve) => rfbServer.close(resolve));
+    await new Promise((resolve) => audioServer.close(resolve));
+  });
+
+  it('tells the viewer where its audio is, on the same token', async () => {
+    const config = await (await fetch(`${origin}/session/${audioToken}`)).json();
+    assert.equal(config.audio.wsPath, `/audio/${audioToken}`);
+    assert.equal(config.audio.port, audioServer.address().port);
+    assert.equal(config.audio.channels, 2);
+    assert.equal(config.audio.targetLatencyMs, 120);
+
+    const silent = await (await fetch(`${origin}/session/${silentToken}`)).json();
+    assert.equal(silent.audio, null);
+  });
+
+  it('bridges the audio port separately from the RFB one', async () => {
+    const wsOrigin = origin.replace('http://', 'ws://');
+    const rfb = openStream(`${wsOrigin}/ws/${audioToken}`, origin);
+    const audio = openStream(`${wsOrigin}/audio/${audioToken}`, origin);
+
+    // Each stream reaches its own port: the greeting proves which one answered.
+    assert.equal(await rfb.first, 'RFB 003.008\n');
+    assert.equal(await audio.first, 'opus-frames');
+
+    rfb.ws.close();
+    audio.ws.close();
+  });
+
+  it('refuses an audio bridge the session never asked for', async () => {
+    const wsOrigin = origin.replace('http://', 'ws://');
+    // A session with audio off has no audio endpoint at all...
+    await assert.rejects(openWebSocket(`${wsOrigin}/audio/${silentToken}`, { origin }), /403/);
+    // ...and the token and origin checks apply to it exactly as to /ws/.
+    await assert.rejects(openWebSocket(`${wsOrigin}/audio/0123456789abcdef`, { origin }), /403/);
+    await assert.rejects(
+      openWebSocket(`${wsOrigin}/audio/${audioToken}`, { origin: 'https://evil.test' }), /403/);
+    // And nothing else routes anywhere.
+    await assert.rejects(openWebSocket(`${wsOrigin}/video/${audioToken}`, { origin }), /403/);
+  });
+});
+
+/**
+ * Opens a bridge and captures its first message. The listener has to be
+ * attached before the socket opens: the stand-in servers greet immediately, so
+ * waiting for 'open' first would race the greeting.
+ */
+function openStream(url, origin) {
+  const ws = new WebSocket(url, { origin });
+  const first = new Promise((resolve, reject) => {
+    ws.once('message', (data) => resolve(Buffer.from(data).toString('latin1')));
+    ws.once('error', reject);
+  });
+  return { ws, first };
+}
+
 function get(url, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(url, { headers }, (res) => {

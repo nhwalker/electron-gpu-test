@@ -35,6 +35,12 @@ const { WebSocketServer } = require('ws');
 const DEFAULT_VNC_PORT = 5900;
 const MAX_DISPLAY_NUMBER = 99;
 
+// Desktop audio arrives on a second port, as Opus packets framed per RFC 4571
+// (see examples/vnc-audio). It is opt-in: a plain VNC server has no such port,
+// so we only connect when a URL asks for it.
+const DEFAULT_AUDIO_PORT = 5901;
+const DEFAULT_AUDIO_LATENCY_MS = 120;
+
 // Pause the VNC->browser direction while this many bytes are queued in the
 // WebSocket. Framebuffer updates arrive far faster than a slow renderer drains
 // them; without this the queue is unbounded.
@@ -73,6 +79,21 @@ function parseLevel(value, name) {
 }
 
 /**
+ * `audio=on` streams desktop audio from the conventional port, `audio=<port>`
+ * from another one, and the default (absent, or off) leaves it alone.
+ */
+function parseAudioOption(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (/^(1|true|yes|on)$/i.test(value)) return DEFAULT_AUDIO_PORT;
+  if (/^(0|false|no|off)$/i.test(value)) return null;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`audio must be on, off or a port number but was "${value}"`);
+  }
+  return port;
+}
+
+/**
  * Parses `vnc://[user[:password]@]host[:port|:display][?options]` into the
  * target description the viewer page is driven from. Returns null for anything
  * that isn't a vnc:// URL; throws with a readable message for one that is but
@@ -107,6 +128,16 @@ function parseVncUrl(arg) {
   const password = decodeURIComponent(url.password) || params.get('password')
     || process.env.VNC_PASSWORD || '';
 
+  const audioPort = parseAudioOption(params.get('audio'));
+  const audioLatency = Number(params.get('audio_latency') || DEFAULT_AUDIO_LATENCY_MS);
+  if (!Number.isFinite(audioLatency) || audioLatency < 20 || audioLatency > 2000) {
+    throw new Error(`audio_latency must be 20-2000 (ms) but was "${params.get('audio_latency')}"`);
+  }
+  const audioChannels = Number(params.get('audio_channels') || 2);
+  if (![1, 2].includes(audioChannels)) {
+    throw new Error(`audio_channels must be 1 or 2 but was "${params.get('audio_channels')}"`);
+  }
+
   const resize = (params.get('resize') || 'scale').toLowerCase();
   if (!['scale', 'remote', 'off'].includes(resize)) {
     throw new Error(`resize must be scale, remote or off but was "${resize}"`);
@@ -123,6 +154,15 @@ function parseVncUrl(arg) {
     host,
     port,
     label: `vnc://${url.host || host}`,
+    // Same host, second port: the audio stream the viewer decodes with
+    // WebCodecs. null when the URL didn't ask for audio.
+    audio: audioPort === null ? null : {
+      port: audioPort,
+      channels: audioChannels,
+      // How much audio to keep buffered before playing: lower is more
+      // responsive, higher rides out bigger network hiccups.
+      targetLatencyMs: audioLatency
+    },
     credentials,
     options: {
       // Send no input to the server; just watch.
@@ -266,6 +306,7 @@ class VncViewerServer {
       host: target.host,
       port: target.port,
       wsPath: `/ws/${token}`,
+      audio: target.audio ? { ...target.audio, wsPath: `/audio/${token}` } : null,
       credentials: target.credentials,
       options: target.options
     });
@@ -313,28 +354,46 @@ class VncViewerServer {
 
   _handleUpgrade(req, socket, head) {
     const url = new URL(req.url, this._origin);
-    const token = url.pathname.startsWith('/ws/') ? url.pathname.slice('/ws/'.length) : '';
-    const target = this._sessions.get(token);
+    const endpoint = this._resolveStream(url.pathname);
 
     // Cross-origin WebSocket handshakes are not blocked by the browser the way
     // cross-origin fetches are, so the origin is checked here: only the viewer
-    // page this server itself served may open the bridge, never a remote page
+    // page this server itself served may open a bridge, never a remote page
     // that happens to be loaded in another window of this app.
-    if (!target || !this._hostAllowed(req) || req.headers.origin !== this._origin) {
+    if (!endpoint || !this._hostAllowed(req) || req.headers.origin !== this._origin) {
       socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       return socket.destroy();
     }
 
-    this._wss.handleUpgrade(req, socket, head, (ws) => this._bridge(ws, target));
+    this._wss.handleUpgrade(req, socket, head, (ws) => this._bridge(ws, endpoint));
+  }
+
+  /**
+   * Both of a session's streams live behind the same token: /ws/<token> is the
+   * RFB connection and /audio/<token> the desktop audio, when the URL asked for
+   * it. Anything else -- an unknown token, or audio on a session without it --
+   * resolves to nothing and is refused.
+   */
+  _resolveStream(pathname) {
+    const match = /^\/(ws|audio)\/([0-9a-f]+)$/.exec(pathname);
+    if (!match) return null;
+    const [, kind, token] = match;
+    const target = this._sessions.get(token);
+    if (!target) return null;
+    if (kind === 'ws') {
+      return { host: target.host, port: target.port, label: target.label };
+    }
+    if (!target.audio) return null;
+    return { host: target.host, port: target.audio.port, label: `${target.label} audio` };
   }
 
   /**
    * Relays one WebSocket to one TCP connection, byte for byte, until either
    * end goes away. Close codes carry the reason to the viewer, which shows it.
    */
-  _bridge(ws, target) {
-    const where = `${target.host}:${target.port}`;
-    const tcp = net.connect({ host: target.host, port: target.port });
+  _bridge(ws, endpoint) {
+    const where = `${endpoint.host}:${endpoint.port}`;
+    const tcp = net.connect({ host: endpoint.host, port: endpoint.port });
     tcp.setNoDelay(true); // RFB is latency-sensitive; don't let Nagle batch input.
 
     let closed = false;
@@ -385,4 +444,11 @@ function respond(res, status, contentType, body, csp) {
   res.end(body);
 }
 
-module.exports = { isVncUrl, parseVncUrl, resolveNovncRoot, VncViewerServer, DEFAULT_VNC_PORT };
+module.exports = {
+  isVncUrl,
+  parseVncUrl,
+  resolveNovncRoot,
+  VncViewerServer,
+  DEFAULT_VNC_PORT,
+  DEFAULT_AUDIO_PORT
+};

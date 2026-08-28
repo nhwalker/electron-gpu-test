@@ -97,6 +97,19 @@ button:disabled {
   cursor: default;
 }
 
+/* The audio button doubles as the audio status: dimmed until sound is
+   actually arriving, highlighted when the browser is waiting for a click. */
+#audio[data-state="connecting"],
+#audio[data-state="disconnected"],
+#audio[data-state="error"] {
+  opacity: 0.5;
+}
+
+#audio[data-state="blocked"] {
+  border-color: var(--accent);
+  opacity: 1;
+}
+
 #screen {
   flex: 1 1 auto;
   overflow: hidden;

@@ -6,11 +6,14 @@
 // bridge by that token, so no password ends up in a URL or a window title.
 
 import RFB from '/novnc/core/rfb.js';
+import { DesktopAudio } from './audio.js';
 
 const toolbar = {
   indicator: document.getElementById('indicator'),
   target: document.getElementById('target'),
   message: document.getElementById('message'),
+  audio: document.getElementById('audio'),
+  audioLabel: document.getElementById('audio-label'),
   ctrlAltDel: document.getElementById('ctrl-alt-del'),
   fullscreen: document.getElementById('fullscreen'),
   connect: document.getElementById('connect')
@@ -20,7 +23,12 @@ const dialog = document.getElementById('credentials-dialog');
 
 // Test hook, mirroring the pattern the WebGL pages use: the functional test
 // reads connection state from here instead of guessing at pixels.
-const testState = { state: 'connecting', label: '', desktopName: null, error: null, connections: 0 };
+const testState = {
+  state: 'connecting', label: '', desktopName: null, error: null, connections: 0,
+  // Null unless the URL asked for audio; the functional test reads it to prove
+  // the desktop's sound arrived.
+  audio: null
+};
 window.VNC_TEST = testState;
 
 const token = new URLSearchParams(location.search).get('s');
@@ -49,12 +57,46 @@ toolbar.target.textContent = session.options.title || session.label;
 testState.label = session.label;
 
 let rfb = null;
+let audio = null;
 let reconnectTimer = null;
 // A disconnect we asked for (or an auth failure) must not trigger the automatic
 // reconnect -- only an unexpected drop should.
 let reconnectSuppressed = false;
 
 connect();
+startAudio();
+
+// --- Audio --------------------------------------------------------------------
+
+// Desktop audio is a second stream on a second port, bridged by the main
+// process the same way the RFB connection is, and entirely independent of it:
+// it connects, reconnects and fails on its own without disturbing the picture.
+function startAudio() {
+  if (!session.audio) return;
+  toolbar.audio.hidden = false;
+  audio = new DesktopAudio(session.audio, onAudioState);
+  testState.audio = audio.stats;
+  // Zero-cost until called: the functional test uses it to prove the desktop's
+  // tone survived capture, transport, decode and playback.
+  testState.audioFrequency = () => audio.dominantFrequency();
+  audio.start().catch((err) => {
+    console.error(`vnc-audio: could not start audio: ${err.message}`);
+    onAudioState({ state: 'error', blocked: false, muted: false });
+  });
+}
+
+function onAudioState({ state, blocked, muted }) {
+  // Chromium can refuse to start an AudioContext without a user gesture. The
+  // app launches with --autoplay-policy=no-user-gesture-required so that
+  // normally can't happen, but if it does, the button is the gesture.
+  const label = blocked ? 'Enable audio' : muted ? 'Audio off' : 'Audio';
+  toolbar.audioLabel.textContent = label;
+  toolbar.audio.dataset.state = state;
+  toolbar.audio.title = blocked
+    ? 'Click to allow the remote desktop to play sound'
+    : muted ? 'Unmute the remote desktop' : 'Mute the remote desktop';
+  Object.assign(testState.audio, { state, blocked, muted });
+}
 
 // --- Connection ---------------------------------------------------------------
 
@@ -185,6 +227,7 @@ function promptForCredentials(types) {
   });
 }
 
+toolbar.audio.addEventListener('click', () => audio && audio.toggleMuted());
 toolbar.connect.addEventListener('click', connect);
 toolbar.ctrlAltDel.addEventListener('click', () => rfb && rfb.sendCtrlAltDel());
 toolbar.fullscreen.addEventListener('click', () => {
@@ -195,4 +238,5 @@ toolbar.fullscreen.addEventListener('click', () => {
 window.addEventListener('beforeunload', () => {
   reconnectSuppressed = true;
   if (rfb) rfb.disconnect();
+  if (audio) audio.stop();
 });
