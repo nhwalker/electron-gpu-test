@@ -1,0 +1,87 @@
+# =============================================================================
+# An example VNC server with desktop audio, for trying the app's `?audio=on`
+# support against something real:
+#
+#   electron-gpu-test 'vnc://:s3cret@localhost:5900?audio=on'
+#
+# It publishes two ports, which is what the app expects:
+#
+#   5900  RFB, from x11vnc
+#   5901  the desktop's sound, as Opus packets in RTP, length-prefixed per
+#         RFC 4571 -- the wire format app/vnc-viewer/audio.js decodes
+#
+# The sound itself comes from a PipeWire **null sink**: a device with no
+# hardware behind it, so everything played on the desktop mixes into it and
+# `vnc0.monitor` is the source that reads that mix back. That monitor is the
+# single tap the audio pipeline captures from, and it is how you would wire this
+# up on a real desktop too.
+#
+# Rocky Linux 9 rather than the UBI9 the product image uses: the audio and X
+# packages live in AppStream/EPEL, and this is a server-side example, not
+# something we ship. Everything is a stock RPM -- no source builds.
+#
+# NOTE: this image has not been built (no container runtime where it was
+# written). Package names and the pipeline are reviewed, not run; the
+# gst-inspect assertions below turn a wrong guess into a build failure with a
+# clear reason rather than an image that starts and stays silent.
+# =============================================================================
+FROM quay.io/rockylinux/rockylinux:9
+
+# EPEL carries x11vnc; CRB backs a few of the X libraries.
+RUN dnf -y install epel-release && \
+    dnf config-manager --set-enabled crb && \
+    dnf clean all
+
+# --- The desktop: a virtual X display and the RFB server that publishes it ----
+# xorg-x11-apps supplies the handful of clients that draw the demo picture.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        xorg-x11-server-Xvfb \
+        xorg-x11-apps \
+        x11vnc \
+        procps-ng \
+    && dnf clean all
+
+# --- Sound: PipeWire, driving the PulseAudio API ------------------------------
+# pipewire-pulseaudio provides the PulseAudio socket and *conflicts* with the
+# classic pulseaudio daemon, so exactly one of them can be installed. PipeWire is
+# the current default on EL9, and nothing downstream cares which is running:
+# `pulsesrc device=vnc0.monitor` is the same line either way.
+#
+# pulseaudio-utils is the *client* tools (pactl, parec) and coexists with either
+# daemon. wireplumber is PipeWire's session manager; dbus-daemon is the session
+# bus it needs, since there is no systemd user session in here.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        pipewire \
+        pipewire-pulseaudio \
+        pipewire-utils \
+        wireplumber \
+        pulseaudio-utils \
+        dbus-daemon \
+    && dnf clean all
+
+# --- GStreamer: the test tone, and the Opus stream the app connects to --------
+# opusenc lives in gstreamer1-plugins-base on current EL9 builds and in bad-free
+# on others; installing bad-free covers both. rtpopuspay/rtpstreampay and
+# pulsesrc/pulsesink are in -good, audiotestsrc and tcpserversink in -base.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        gstreamer1 \
+        gstreamer1-plugins-base \
+        gstreamer1-plugins-good \
+        gstreamer1-plugins-bad-free \
+    && dnf clean all
+
+# Fail the build here rather than at run time if a pipeline element is missing.
+RUN gst-inspect-1.0 audiotestsrc  > /dev/null && \
+    gst-inspect-1.0 pulsesrc      > /dev/null && \
+    gst-inspect-1.0 opusenc       > /dev/null && \
+    gst-inspect-1.0 rtpopuspay    > /dev/null && \
+    gst-inspect-1.0 rtpstreampay  > /dev/null && \
+    gst-inspect-1.0 tcpserversink > /dev/null
+
+COPY entrypoint.sh /usr/local/bin/vnc-audio-entrypoint.sh
+RUN chmod +x /usr/local/bin/vnc-audio-entrypoint.sh
+
+# 5900 RFB | 5901 the desktop's audio
+EXPOSE 5900 5901
+
+ENTRYPOINT ["/usr/local/bin/vnc-audio-entrypoint.sh"]
