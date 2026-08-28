@@ -2,12 +2,16 @@
 //
 // Usage (inside the container, via launch.sh):
 //   /app/launch.sh https://example.com https://webrtc.github.io/samples/
+//   /app/launch.sh vnc://desktop.example.test:5901
 //
 // Any argument that looks like a URL (http/https, or a file path) is opened in
-// its own BrowserWindow. Chromium's own switches (--enable-features=..., etc.)
-// are ignored here. If no URL is given we fall back to a sensible default.
+// its own BrowserWindow. A vnc:// URL is opened too, in a noVNC-backed viewer
+// page the app serves and bridges itself (see vnc.js). Chromium's own switches
+// (--enable-features=..., etc.) are ignored here. If no URL is given we fall
+// back to a sensible default.
 
 const { app, BrowserWindow } = require('electron');
+const vnc = require('./vnc');
 
 const DEFAULT_URL = 'https://webrtc.github.io/samples/';
 
@@ -22,6 +26,11 @@ const DEFAULT_URL = 'https://webrtc.github.io/samples/';
 if (process.env.ELECTRON_USER_DATA) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA);
 }
+
+// Serves the noVNC viewer page and bridges its WebSocket to the VNC server's TCP
+// port. Started lazily: it only binds a port if a vnc:// URL was actually asked
+// for.
+const vncServer = new vnc.VncViewerServer();
 
 // Per-URL storage isolation: each window gets its own *persistent* session
 // partition keyed by the page's origin, so different sites can't read each
@@ -41,14 +50,28 @@ function partitionForUrl(url) {
   return `persist:${key.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 }
 
-// Pull the URLs out of argv. argv looks like:
+// Pull the targets out of argv. argv looks like:
 //   [ electronBinary, appPath, '--some-chromium-switch', 'https://...', ... ]
-// so we keep only the bits that parse as http(s)/file URLs.
-function urlsFromArgv(argv) {
-  return argv.filter((arg) => /^(https?|file):\/\//i.test(arg));
+// so we keep only the bits that parse as http(s)/file/vnc URLs. A malformed
+// vnc:// URL is reported and skipped rather than taking the whole app down.
+function targetsFromArgv(argv) {
+  const targets = [];
+  for (const arg of argv) {
+    if (/^(https?|file):\/\//i.test(arg)) {
+      targets.push({ url: arg, partition: partitionForUrl(arg) });
+    } else if (vnc.isVncUrl(arg)) {
+      try {
+        targets.push({ vnc: vnc.parseVncUrl(arg) });
+      } catch (err) {
+        console.error(`vnc: ignoring "${arg}": ${err.message}`);
+      }
+    }
+  }
+  return targets;
 }
 
-function createWindow(url) {
+function createWindow(url, options = {}) {
+  const { partition = partitionForUrl(url), grabKeys = false } = options;
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -57,9 +80,17 @@ function createWindow(url) {
       nodeIntegration: false,
       contextIsolation: true,
       // Isolate each origin's storage into its own persistent partition.
-      partition: partitionForUrl(url)
+      partition
     }
   });
+
+  // A remote desktop should receive every keystroke, including the ones the
+  // default menu claims (Ctrl+R reload, Ctrl+W close, F11, ...) -- reloading the
+  // viewer would drop the session. This suppresses menu accelerators while the
+  // page has focus, without touching the page's own key handling.
+  if (grabKeys && typeof win.webContents.setIgnoreMenuShortcuts === 'function') {
+    win.webContents.setIgnoreMenuShortcuts(true);
+  }
 
   win.loadURL(url);
   return win;
@@ -90,12 +121,50 @@ if (process.env.TLS_INSECURE_SKIP_VERIFY === '1') {
   });
 }
 
-app.whenReady().then(() => {
-  const urls = urlsFromArgv(process.argv);
-  const targets = urls.length > 0 ? urls : [DEFAULT_URL];
+app.whenReady().then(async () => {
+  const targets = targetsFromArgv(process.argv);
+  if (targets.length === 0) {
+    targets.push({ url: DEFAULT_URL, partition: partitionForUrl(DEFAULT_URL) });
+  }
 
-  for (const url of targets) {
-    createWindow(url);
+  // Bring the loopback viewer server up before opening any VNC window, so the
+  // window has a URL to load. If it can't bind, the VNC targets are dropped
+  // (with a reason) rather than opening windows that can never connect.
+  const vncTargets = targets.filter((target) => target.vnc);
+  if (vncTargets.length > 0) {
+    try {
+      for (const target of vncTargets) {
+        target.token = vncServer.register(target.vnc);
+      }
+      const origin = await vncServer.start();
+      console.log(`vnc: serving the noVNC viewer from ${origin}`);
+    } catch (err) {
+      console.error(`vnc: could not start the viewer server: ${err.message}`);
+      for (const target of vncTargets) {
+        target.token = null;
+      }
+    }
+  }
+
+  let opened = 0;
+  for (const target of targets) {
+    if (target.vnc) {
+      if (!target.token) continue;
+      console.log(`vnc: opening ${target.vnc.label}`);
+      createWindow(vncServer.viewerUrl(target.token), {
+        partition: target.vnc.partition,
+        grabKeys: target.vnc.options.grabKeys
+      });
+    } else {
+      createWindow(target.url, { partition: target.partition });
+    }
+    opened += 1;
+  }
+
+  if (opened === 0) {
+    console.error('No window could be opened; exiting.');
+    app.exit(1);
+    return;
   }
 
   app.on('activate', () => {
@@ -106,5 +175,6 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  vncServer.close();
   app.quit();
 });

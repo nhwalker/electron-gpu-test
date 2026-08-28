@@ -42,6 +42,8 @@ functional-tests/
 │   ├── test-harness-entrypoint.sh                         # wait for shared X socket -> launch.sh -> ChromeDriver
 │   ├── xvfb.Dockerfile                                    # standalone Xvfb sidecar image (Xvfb + ffmpeg)
 │   ├── xvfb-entrypoint.sh                                 # serves the X display into the shared socket volume
+│   ├── vnc-server.Dockerfile                              # standalone VNC server image (Xvfb + x11vnc) for the vnc:// test
+│   ├── vnc-server-entrypoint.sh                           # draws a fixed picture on Xvfb and exports it over RFB
 │   ├── record-start.sh                                    # start ffmpeg x11grab raw capture of the display (on demand)
 │   ├── record-stop.sh                                     # stop capture, transcode to WebM, emit the file
 │   ├── render-check.html                                  # deterministic page the app loads
@@ -53,6 +55,7 @@ functional-tests/
     ├── java/.../ElectronAppFunctionalTest.java            # drives the REAL Electron app
     ├── java/.../WebGlWorldWindFunctionalTest.java         # drives the app rendering a NASA WorldWind WebGL globe
     ├── java/.../WebGlWorldWindSpinFunctionalTest.java     # as above, but the globe spins -> stills + WebM in Allure
+    ├── java/.../VncViewerFunctionalTest.java              # opens a vnc:// URL against a real x11vnc server
     ├── java/.../XvfbContainer.java                        # reusable module: Xvfb display sidecar + screen recording
     ├── java/.../TestImages.java                           # resolves the pre-built image tags the tests run
     └── resources/
@@ -103,6 +106,19 @@ functional-tests/
   can't lag or drop frames), then `record-stop.sh` **transcodes the capture to WebM** (VP9) and the clip is
   copied back to the host and attached to the Allure report — alongside the two **still screenshots** bracketing
   the spin.
+
+- **`VncViewerFunctionalTest`** — the **`vnc://`** check. It reuses the shared-`Network` + server-by-alias
+  setup of the mTLS test and the Xvfb sidecar + harness-image setup of `ElectronAppFunctionalTest`, but the
+  sidecar it points the app at is a **real VNC server** (`vnc-server.Dockerfile`: Xvfb holding a fixed picture,
+  exported by **x11vnc** with password authentication). The app is launched with a single
+  `vnc://vncserver:5900` argument and the password in `VNC_PASSWORD`, which exercises the whole path added for
+  VNC: `main.js` recognises the URL, the main process serves the noVNC viewer page on loopback and **bridges its
+  WebSocket onto a TCP connection** to the server, and noVNC completes the RFB handshake and decodes the
+  framebuffer. The test asserts the window really is on the app's own `http://127.0.0.1:<port>/viewer.html`
+  page, that the launch log shows the bridge running, and then proves the desktop **painted** from the canvas
+  noVNC draws into: it has the remote framebuffer's dimensions, its pixels are non-blank and multi-coloured,
+  and they **keep changing** (the server runs a ticking clock) — so updates are still flowing, not one lucky
+  frame. A screenshot of the remote desktop is attached to the Allure report.
 
 ## Shared test infrastructure
 
@@ -171,10 +187,11 @@ different pre-built tag (as CI does), set the matching env var:
 - **`WEBGL_HARNESS_IMAGE`** — harness + vendored offline NASA WorldWind (default `electron-gpu-test:webgl-harness`).
 - **`WEBGL_SPIN_HARNESS_IMAGE`** — WebGL harness + spinning page (default `electron-gpu-test:webgl-spin-harness`).
 - **`XVFB_IMAGE`** — the Xvfb sidecar `XvfbContainer` runs (default `electron-gpu-test:xvfb`).
+- **`VNC_SERVER_IMAGE`** — the x11vnc server the `vnc://` test connects to (default `electron-gpu-test:vnc-server`).
 
 The same vars (plus `ELECTRON_BASE_IMAGE` for the production tag the harness
 layers build `FROM`) override the tags `build-images.sh` produces. In CI the
-expensive production and Xvfb images are built with buildx + the GHA layer cache
-and the script then builds only the thin harness layers on top
-(`build-images.sh harness webgl-harness spin-harness`) — see
+expensive standalone images (production, Xvfb, VNC server) are built with buildx
++ the GHA layer cache and the script then builds only the thin harness layers on
+top (`build-images.sh harness webgl-harness spin-harness`) — see
 `.github/workflows/ci.yml`.

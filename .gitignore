@@ -2,6 +2,11 @@ node_modules/
 app/node_modules/
 npm-debug.log*
 
+# No lock file is kept: package.json pins exact versions and the two runtime
+# deps (@novnc/novnc, ws) have no dependencies of their own, so a lock would
+# only add churn to image builds.
+package-lock.json
+
 # Local-only container build-test artifacts (sandbox egress-proxy CA + the
 # throwaway Containerfile that trusts it). Never commit these.
 egress-ca-bundle.crt

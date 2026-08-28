@@ -10,6 +10,7 @@
 # Targets (default: all), in dependency order:
 #   base           production image from the repo's Containerfile
 #   xvfb           Xvfb + ffmpeg display/recording sidecar
+#   vnc-server     Xvfb + x11vnc serving a fixed picture over RFB (vnc:// test)
 #   harness        base + version-matched ChromeDriver (FROM base)
 #   webgl-harness  harness + vendored offline NASA WorldWind (FROM base)
 #   spin-harness   webgl-harness + the spinning-globe page (FROM webgl-harness)
@@ -20,7 +21,7 @@
 #
 # Image tags default to what the test suite expects (see TestImages.java) and
 # can be overridden with the matching env vars:
-#   ELECTRON_BASE_IMAGE, XVFB_IMAGE, ELECTRON_HARNESS_IMAGE,
+#   ELECTRON_BASE_IMAGE, XVFB_IMAGE, VNC_SERVER_IMAGE, ELECTRON_HARNESS_IMAGE,
 #   WEBGL_HARNESS_IMAGE, WEBGL_SPIN_HARNESS_IMAGE
 #
 # Building `base` runs dnf/npm (downloads Electron); the harness layers download
@@ -47,11 +48,12 @@ fi
 
 BASE_IMAGE="${ELECTRON_BASE_IMAGE:-electron-gpu-test:undertest}"
 XVFB_IMAGE="${XVFB_IMAGE:-electron-gpu-test:xvfb}"
+VNC_SERVER_IMAGE="${VNC_SERVER_IMAGE:-electron-gpu-test:vnc-server}"
 HARNESS_IMAGE="${ELECTRON_HARNESS_IMAGE:-electron-gpu-test:harness}"
 WEBGL_HARNESS_IMAGE="${WEBGL_HARNESS_IMAGE:-electron-gpu-test:webgl-harness}"
 WEBGL_SPIN_HARNESS_IMAGE="${WEBGL_SPIN_HARNESS_IMAGE:-electron-gpu-test:webgl-spin-harness}"
 
-ALL_TARGETS=(base xvfb harness webgl-harness spin-harness)
+ALL_TARGETS=(base xvfb vnc-server harness webgl-harness spin-harness)
 TARGETS=("$@")
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
     TARGETS=("${ALL_TARGETS[@]}")
@@ -68,7 +70,7 @@ wants() {
 # Validate target names up front so a typo doesn't silently build nothing.
 for t in "${TARGETS[@]}"; do
     case "${t}" in
-        base|xvfb|harness|webgl-harness|spin-harness) ;;
+        base|xvfb|vnc-server|harness|webgl-harness|spin-harness) ;;
         *)
             echo "error: unknown target '${t}' (valid: ${ALL_TARGETS[*]})" >&2
             exit 1
@@ -101,6 +103,10 @@ fi
 
 if wants xvfb; then
     build -t "${XVFB_IMAGE}" -f "${SCRIPT_DIR}/xvfb.Dockerfile" "${SCRIPT_DIR}"
+fi
+
+if wants vnc-server; then
+    build -t "${VNC_SERVER_IMAGE}" -f "${SCRIPT_DIR}/vnc-server.Dockerfile" "${SCRIPT_DIR}"
 fi
 
 if wants harness; then

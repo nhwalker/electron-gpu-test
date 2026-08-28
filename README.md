@@ -11,9 +11,12 @@ steps.
 
 - `app/` — the Electron app and all Node/npm files
   - `main.js` — opens one window per URL passed on the command line
-  - `package.json` — pins `electron@41.1.1`
+  - `vnc.js` — serves the noVNC viewer and bridges it to a VNC server's TCP port
+  - `vnc-viewer/` — the noVNC-backed page a `vnc://` URL opens in
+  - `package.json` — pins `electron@41.1.1`, `@novnc/novnc` and `ws`
   - `launch.sh` — the launch wrapper with all the GPU/Ozone switches
   - `setup-certs.sh` — imports runtime-mounted TLS certs into the NSS DB (sourced by `launch.sh`)
+- `tests/` — Node tests for the parts that need no display or container (`node --test tests/vnc.test.js`)
 - `Containerfile` — builds the image
 
 ## The app
@@ -21,6 +24,10 @@ steps.
 It's deliberately tiny: it opens the web pages named as CLI arguments, one
 window each. Any argument matching `http(s)://` or `file://` is opened; Chromium
 switches are ignored. With no URL it falls back to the WebRTC samples page.
+
+A `vnc://host:port` argument works too — it opens the remote desktop in a
+[noVNC](https://novnc.com/)-backed page the app serves itself. See
+[Remote desktops over VNC](#remote-desktops-over-vnc-vnc) below.
 
 ## Build
 
@@ -78,6 +85,104 @@ podman run --rm --device nvidia.com/gpu=all \
   -v "$XAUTHORITY":/home/app/.Xauthority:ro -e XAUTHORITY=/home/app/.Xauthority \
   electron-gpu-test chrome://gpu
 ```
+
+## Remote desktops over VNC (`vnc://`)
+
+Pass a `vnc://` URL and the app opens that remote desktop in a
+[noVNC](https://novnc.com/) viewer page it serves itself — no websockify, no
+separate gateway, no browser plugin.
+
+```sh
+podman run --rm --device nvidia.com/gpu=all \
+  -e OZONE=x11 -e DISPLAY="$DISPLAY" \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+  -v "$XAUTHORITY":/home/app/.Xauthority:ro -e XAUTHORITY=/home/app/.Xauthority \
+  -e VNC_PASSWORD=hunter2 \
+  electron-gpu-test vnc://desktop.example.test:5901
+```
+
+VNC URLs mix freely with web URLs — each argument gets its own window:
+
+```sh
+electron-gpu-test https://webrtc.github.io/samples/ vnc://desktop.example.test:5901
+```
+
+### The URL
+
+```
+vnc://[user[:password]@]host[:port|:display][?option=value&...]
+```
+
+- **Port.** Omitted, it's the RFB default `5900`. A number of 99 or less is read
+  as a *display number* the way VNC clients traditionally do it, so
+  `vnc://host:1` is display `:1`, i.e. TCP 5901. Anything larger is a TCP port.
+- **Password.** `VNC_PASSWORD` (and `VNC_USERNAME`) in the environment is the
+  form to prefer: a password in the URL is visible to anything that can read the
+  container's process list. Both the `user:password@` userinfo and
+  `?password=` also work, and win over the environment. With no password at all,
+  a server that wants one prompts in the page.
+- **Authentication types** are whatever noVNC supports: None, VNC password,
+  VeNCrypt (Plain), RA2ne, Tight, ARD and MS-Logon II. The VeNCrypt subtypes
+  that wrap the RFB stream in TLS are not among them — a browser can't do TLS
+  inside a stream it doesn't own.
+
+Options, as query parameters:
+
+| Option | Default | What it does |
+| ------ | ------- | ------------ |
+| `resize` | `scale` | `scale` fits the remote screen to the window, `remote` asks the server to resize its own framebuffer to the window, `off` shows it 1:1 and crops. |
+| `view_only` | `0` | `1` sends no input at all — watch without touching. |
+| `shared` | `1` | `0` asks the server to disconnect other clients (the RFB shared flag). |
+| `quality` | server's | Tight/JPEG quality, `0`–`9`. |
+| `compression` | server's | zlib compression level, `0`–`9`. |
+| `reconnect` | `1` | `0` stops the viewer reconnecting after an unexpected drop. |
+| `grab_keys` | `1` | `0` lets the app's menu keep its accelerators (`Ctrl+R`, `Ctrl+W`, `F11`, …) instead of passing those keys to the remote desktop. |
+| `title` | — | Window title, instead of the desktop name the server reports. |
+| `username`, `password` | — | Credentials, for the auth types that use them. |
+
+```sh
+# Watch a lab machine, unscaled, without touching it:
+electron-gpu-test 'vnc://lab-01:5901?view_only=1&resize=off'
+```
+
+### How it works
+
+A browser engine can't open a TCP socket, and a VNC server doesn't speak
+WebSocket. noVNC bridges that gap the way `websockify` does — except the bridge
+is the app's own main process, so nothing else has to be deployed:
+
+```
+BrowserWindow                     main process                    VNC server
+--------------------------        ----------------------------    ------------
+http://127.0.0.1:PORT/      <-->  loopback HTTP server
+viewer.html + noVNC               (serves the viewer + noVNC)
+RFB over WebSocket          <-->  /ws/<token> bridge          <-->  TCP host:port
+```
+
+The relay is byte-for-byte — no RFB parsing happens in the app — so every
+encoding, authentication scheme and extension noVNC supports keeps working.
+
+Notes on how it's contained:
+
+- The viewer server binds **127.0.0.1 on an ephemeral port** and is reachable
+  only with an unguessable token minted for a URL that was named on the command
+  line. It checks the `Host` header (against DNS rebinding) and the WebSocket
+  handshake's `Origin`, so a remote page loaded in another window of the app
+  can't open a bridge. The page itself runs under a CSP that allows no remote
+  code and no connection but its own bridge.
+- The password reaches the page over that loopback connection, fetched by token
+  — never in the window's URL, title or history.
+- Each remote host gets **its own persistent storage partition**, keyed on the
+  host and port rather than on the loopback port, which changes every launch.
+- **Keyboard.** By default the viewer suppresses the app's menu accelerators
+  while it has focus, so `Ctrl+R` and `Ctrl+W` reach the remote desktop instead
+  of reloading or closing the session (`grab_keys=0` to opt out).
+- **Clipboard** syncs remote → local only. The other direction needs a browser
+  paste event, which noVNC swallows while it holds keyboard focus.
+- The bridged connection is **as secure as RFB itself**, i.e. not very: the
+  standard VNC password auth protects the password, not the session. Across an
+  untrusted network, tunnel it (SSH, WireGuard, a service mesh) and point the
+  URL at the tunnel's local end.
 
 ## Persistent web storage (sessions, cookies, cache)
 

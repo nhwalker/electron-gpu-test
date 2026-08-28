@@ -28,6 +28,11 @@ final class TestImages {
         return resolve("XVFB_IMAGE", "electron-gpu-test:xvfb", "xvfb");
     }
 
+    /** Xvfb + x11vnc serving a fixed picture over RFB (the vnc:// test's server). */
+    static DockerImageName vncServer() {
+        return resolve("VNC_SERVER_IMAGE", "electron-gpu-test:vnc-server", "vnc-server");
+    }
+
     /** The production image + a version-matched ChromeDriver. */
     static DockerImageName harness() {
         return resolve("ELECTRON_HARNESS_IMAGE", "electron-gpu-test:harness", "harness");
