@@ -12,7 +12,8 @@ steps.
 - `app/` — the Electron app and all Node/npm files
   - `main.js` — opens one window per URL passed on the command line
   - `vnc.js` — serves the noVNC viewer and bridges it to a VNC server's TCP port
-  - `vnc-viewer/` — the noVNC-backed page a `vnc://` URL opens in
+  - `vnc-viewer/` — the noVNC-backed page a `vnc://` URL opens in, and the
+    Opus/WebCodecs desktop-audio client alongside it
   - `package.json` — pins `electron@41.1.1`, `@novnc/novnc` and `ws`
   - `launch.sh` — the launch wrapper with all the GPU/Ozone switches
   - `setup-certs.sh` — imports runtime-mounted TLS certs into the NSS DB (sourced by `launch.sh`)
@@ -137,6 +138,9 @@ Options, as query parameters:
 | `compression` | server's | zlib compression level, `0`–`9`. |
 | `reconnect` | `1` | `0` stops the viewer reconnecting after an unexpected drop. |
 | `grab_keys` | `1` | `0` lets the app's menu keep its accelerators (`Ctrl+R`, `Ctrl+W`, `F11`, …) instead of passing those keys to the remote desktop. |
+| `audio` | `off` | `on` streams the desktop's sound from the conventional port (5901), or name another port. See below. |
+| `audio_latency` | `120` | How many milliseconds of audio to keep buffered. Lower is more responsive; higher rides out bigger hiccups. |
+| `audio_channels` | `2` | `1` for a mono stream. Must match what the server encodes. |
 | `title` | — | Window title, instead of the desktop name the server reports. |
 | `username`, `password` | — | Credentials, for the auth types that use them. |
 
@@ -144,6 +148,51 @@ Options, as query parameters:
 # Watch a lab machine, unscaled, without touching it:
 electron-gpu-test 'vnc://lab-01:5901?view_only=1&resize=off'
 ```
+
+### Desktop audio
+
+RFB carries no audio, so sound is a second stream on a second port — the same
+shape Guacamole uses, and the app bridges it exactly like the first one:
+
+```sh
+electron-gpu-test 'vnc://desktop.example.test:5901?audio=on'
+```
+
+The server side is one GStreamer pipeline, which
+[`examples/vnc-audio-server`](./examples/vnc-audio-server) packages as a runnable image:
+
+```
+pulsesrc <sink>.monitor ! audioconvert ! audioresample
+                        ! opusenc ! rtpopuspay ! rtpstreampay
+                        ! tcpserversink :5901
+```
+
+That is 20 ms Opus frames, each in an RTP packet, length-prefixed per RFC 4571
+— the standard way to put RTP on a byte stream. The viewer deframes it, decodes
+with WebCodecs' `AudioDecoder` (raw Opus packets need no container and no
+demuxer) and plays the samples through an `AudioWorklet` ring buffer. About
+100 kbit/s, against 1.5 Mbit/s for the same audio uncompressed.
+
+- The **toolbar's audio button** mutes and unmutes, and shows the stream's state:
+  dimmed while it is connecting or dropped, highlighted if the browser is
+  waiting for a click before it will make sound.
+- **Clock drift** is the thing that decides whether this stays working: a server
+  capturing at "48000 Hz" and a browser playing at "48000 Hz" differ by tens of
+  ppm, which is a buffer that empties or fills over minutes. The ring buffer
+  holds `audio_latency` ms and skips forward when it drifts too deep — audible
+  as a faint click, rarely, and only where the alternative was a dropout.
+- The audio connection **reconnects on its own** and is independent of the
+  picture: the sound server can restart without disturbing the RFB session, and
+  a VNC reconnect does not interrupt the audio.
+- **Autoplay:** Chromium will not let a page make noise before a user gesture,
+  and nothing clicks in a container, so `launch.sh` passes
+  `--autoplay-policy=no-user-gesture-required`. Drop that switch if you would
+  rather click first — the audio button doubles as the gesture.
+- **A/V sync is approximate.** RFB has no timestamps, so there is no shared
+  clock to sync the picture to; both streams are simply kept low-latency.
+- **The audio port is a second door**, and the VNC password does not cover it:
+  anything that can reach it hears the desktop. Tunnel it (SSH, WireGuard) on an
+  untrusted network.
 
 ### How it works
 
@@ -156,7 +205,8 @@ BrowserWindow                     main process                    VNC server
 --------------------------        ----------------------------    ------------
 http://127.0.0.1:PORT/      <-->  loopback HTTP server
 viewer.html + noVNC               (serves the viewer + noVNC)
-RFB over WebSocket          <-->  /ws/<token> bridge          <-->  TCP host:port
+RFB over WebSocket          <-->  /ws/<token> bridge          <-->  TCP host:5900
+Opus over WebSocket         <-->  /audio/<token> bridge       <-->  TCP host:5901
 ```
 
 The relay is byte-for-byte — no RFB parsing happens in the app — so every
@@ -166,7 +216,9 @@ Notes on how it's contained:
 
 - The viewer server binds **127.0.0.1 on an ephemeral port** and is reachable
   only with an unguessable token minted for a URL that was named on the command
-  line. It checks the `Host` header (against DNS rebinding) and the WebSocket
+  line. Both of a session's streams live behind that one token — `/ws/<token>`
+  for the picture and `/audio/<token>` for the sound, which resolves to nothing
+  at all unless the URL asked for audio. It checks the `Host` header (against DNS rebinding) and the WebSocket
   handshake's `Origin`, so a remote page loaded in another window of the app
   can't open a bridge. The page itself runs under a CSP that allows no remote
   code and no connection but its own bridge.

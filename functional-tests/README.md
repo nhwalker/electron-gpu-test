@@ -42,8 +42,8 @@ functional-tests/
 │   ├── test-harness-entrypoint.sh                         # wait for shared X socket -> launch.sh -> ChromeDriver
 │   ├── xvfb.Dockerfile                                    # standalone Xvfb sidecar image (Xvfb + ffmpeg)
 │   ├── xvfb-entrypoint.sh                                 # serves the X display into the shared socket volume
-│   ├── vnc-server.Dockerfile                              # standalone VNC server image (Xvfb + x11vnc) for the vnc:// test
-│   ├── vnc-server-entrypoint.sh                           # draws a fixed picture on Xvfb and exports it over RFB
+│   ├── vnc-server.Dockerfile                              # standalone VNC server image (Xvfb + x11vnc + Opus tone) for the vnc:// tests
+│   ├── vnc-server-entrypoint.sh                           # draws a fixed picture, exports it over RFB, streams a tone as Opus
 │   ├── record-start.sh                                    # start ffmpeg x11grab raw capture of the display (on demand)
 │   ├── record-stop.sh                                     # stop capture, transcode to WebM, emit the file
 │   ├── render-check.html                                  # deterministic page the app loads
@@ -56,6 +56,7 @@ functional-tests/
     ├── java/.../WebGlWorldWindFunctionalTest.java         # drives the app rendering a NASA WorldWind WebGL globe
     ├── java/.../WebGlWorldWindSpinFunctionalTest.java     # as above, but the globe spins -> stills + WebM in Allure
     ├── java/.../VncViewerFunctionalTest.java              # opens a vnc:// URL against a real x11vnc server
+    ├── java/.../VncAudioFunctionalTest.java               # plays the desktop's audio through the same viewer
     ├── java/.../XvfbContainer.java                        # reusable module: Xvfb display sidecar + screen recording
     ├── java/.../TestImages.java                           # resolves the pre-built image tags the tests run
     └── resources/
@@ -119,6 +120,19 @@ functional-tests/
   noVNC draws into: it has the remote framebuffer's dimensions, its pixels are non-blank and multi-coloured,
   and they **keep changing** (the server runs a ticking clock) — so updates are still flowing, not one lucky
   frame. A screenshot of the remote desktop is attached to the Allure report.
+
+- **`VncAudioFunctionalTest`** — the **desktop audio** check, on the same sidecar and image chain as the test
+  above but with `?audio=1` in the URL. The sidecar streams a fixed **440Hz tone as Opus** on a second port,
+  in the wire format the viewer expects (20ms frames, each in an RTP packet, length-prefixed per RFC 4571),
+  so the whole path is assertable: the launch log proves the main process opened a **second bridge** to the
+  audio port behind the same session token; the viewer's counters prove it deframed and **decoded with
+  WebCodecs** with no sequence gaps and kept going; and the page's own **FFT finds the tone again at 440Hz**,
+  which can only be true if capture, transport, decode, the ring buffer and playback all worked — the audio
+  equivalent of the WebGL tests' "the frame is not blank". There is deliberately **no sound server** in the
+  sidecar: the tone goes straight into the encoder, because everything downstream of it is what the app
+  implements. (A real desktop captures a PulseAudio/PipeWire monitor instead; see `examples/vnc-audio-server`.)
+  Chromium runs its audio thread against a null output device when the container has no sound card, so the
+  buffer really does drain — asserted directly, rather than assumed.
 
 ## Shared test infrastructure
 

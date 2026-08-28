@@ -134,8 +134,18 @@ fi
 exec "$ELECTRON_BIN" /app \
   "$OZONE_FLAG" \
   "${RENDER_FLAGS[@]}" \
+  --autoplay-policy=no-user-gesture-required \
   --no-sandbox \
   "$@"
+
+# NOTE on --autoplay-policy=no-user-gesture-required:
+# Chromium refuses to let a page start playing audio until the user has
+# interacted with it. Nothing clicks in a container, so a vnc:// window with
+# audio enabled would come up silently muted until someone pressed the toolbar
+# button. This lifts that for every page the app opens -- acceptable here
+# because the app only ever opens what its own command line named. Drop the
+# switch if you would rather click to allow sound; the viewer's audio button
+# doubles as that gesture.
 
 # NOTE on --no-sandbox (was --disable-gpu-sandbox):
 # As the non-root 'app' user in a default container, Chromium's setuid/namespace
